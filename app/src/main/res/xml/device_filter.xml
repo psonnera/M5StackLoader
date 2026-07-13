@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Silicon Labs CP2102/CP2104 - M5Stack Basic, Fire, Core2 -->
+    <usb-device vendor-id="4292" product-id="60000" />
+
+    <!-- WCH CH9102F - newer M5Stack Basic (v2.7) / Core2 -->
+    <usb-device vendor-id="6790" product-id="21972" />
+    <!-- WCH CH340/CH341 - some clones and downloader kits -->
+    <usb-device vendor-id="6790" product-id="29987" />
+    <usb-device vendor-id="6790" product-id="21795" />
+
+    <!-- Espressif native USB (USB-Serial/JTAG) - M5Stack CoreS3 (ESP32-S3) -->
+    <usb-device vendor-id="12346" product-id="4097" />
+    <!-- Espressif native USB in USB-OTG/CDC download mode -->
+    <usb-device vendor-id="12346" product-id="2" />
+</resources>

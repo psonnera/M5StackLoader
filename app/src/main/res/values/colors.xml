@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ic_launcher_background">#FF1B1F27</color>
+
+    <!-- Both logos are supplied as artwork on a white ground, so they sit on a white
+         badge in either theme rather than being recoloured. -->
+    <color name="logo_badge_background">#FFFFFFFF</color>
+    <color name="logo_badge_stroke">#1F000000</color>
+    <color name="logo_badge_divider">#1F000000</color>
+</resources>

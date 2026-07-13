@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">M5Stack Loader</string>
+    <string name="flash_button">Flash firmware</string>
+    <string name="retry_button">Retry</string>
+    <string name="details">Details</string>
+    <string name="logo_m5stack">M5Stack</string>
+    <string name="logo_nightscout">Nightscout</string>
+    <string name="wifi_enable">Set up Wi-Fi on the device</string>
+    <string name="wifi_ssid">Network name (SSID)</string>
+    <string name="wifi_password">Password</string>
+    <string name="wifi_password_hint">Leave empty for an open network</string>
+    <string name="wifi_password_error">Password must be empty or 8–63 characters</string>
+</resources>
