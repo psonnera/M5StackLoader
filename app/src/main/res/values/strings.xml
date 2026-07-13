@@ -1,5 +1,6 @@
 <resources>
     <string name="app_name">M5Stack Loader</string>
+    <string name="app_description">Programs an M5Stack (Basic, Core2, or CoreS3) with the M5_NightscoutMon firmware</string>
     <string name="flash_button">Flash firmware</string>
     <string name="retry_button">Retry</string>
     <string name="details">Details</string>
@@ -10,4 +11,20 @@
     <string name="wifi_password">Password</string>
     <string name="wifi_password_hint">Leave empty for an open network</string>
     <string name="wifi_password_error">Password must be empty or 8–63 characters</string>
+    <string name="wifi_privacy_link">Why do we ask for this?</string>
+    <string name="wifi_privacy_title">About your Wi-Fi password</string>
+    <string name="wifi_privacy_body"><![CDATA[
+        Your Wi-Fi network name and password are written only to your M5Stack, over the
+        USB cable connected to this phone. They are never uploaded, transmitted over the
+        internet, logged, or stored anywhere by this app.
+        <br/><br/>
+        The only internet access this app performs is downloading the M5_NightscoutMon
+        firmware files from GitHub before flashing. That download never includes your
+        Wi-Fi credentials or any other information about you.
+        <br/><br/>
+        The full source code is available for review at
+        <a href="https://github.com/psonnera/M5StackLoader">github.com/psonnera/M5StackLoader</a>.
+        If you would rather not take our word for it, you are welcome to review the
+        source and build the app yourself instead of installing a prebuilt APK.
+    ]]></string>
 </resources>

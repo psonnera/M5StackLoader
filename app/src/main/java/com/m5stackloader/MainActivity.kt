@@ -18,15 +18,19 @@ import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Bundle
+import android.text.method.LinkMovementMethod
 import android.view.View
+import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import androidx.core.text.HtmlCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.m5stackloader.databinding.ActivityMainBinding
 import com.m5stackloader.esp.UsbDevices
 import com.m5stackloader.wifi.CurrentWifi
@@ -45,9 +49,6 @@ class MainActivity : AppCompatActivity() {
     private val usbManager: UsbManager by lazy {
         getSystemService(Context.USB_SERVICE) as UsbManager
     }
-
-    /** Guards the permission prompt + SSID prefill so they happen once per Ready visit. */
-    private var wifiSetupAttempted = false
 
     private val locationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -93,6 +94,17 @@ class MainActivity : AppCompatActivity() {
         binding.wifiEnable.setOnCheckedChangeListener { _, checked ->
             binding.wifiSsidLayout.isEnabled = checked
             binding.wifiPasswordLayout.isEnabled = checked
+        }
+        binding.wifiPrivacyLink.setOnClickListener { showWifiPrivacyDialog() }
+
+        // Ask up front, before a device is even plugged in, so the Wi-Fi fields can be
+        // filled in at leisure rather than while juggling a USB cable.
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            prefillSsid()
+        } else {
+            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
         lifecycleScope.launch {
@@ -170,12 +182,30 @@ class MainActivity : AppCompatActivity() {
         usbManager.requestPermission(device, pending)
     }
 
+    private fun showWifiPrivacyDialog() {
+        val message = HtmlCompat.fromHtml(
+            getString(R.string.wifi_privacy_body), HtmlCompat.FROM_HTML_MODE_LEGACY,
+        )
+        val dialog = MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.wifi_privacy_title)
+            .setMessage(message)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+        dialog.findViewById<TextView>(android.R.id.message)?.movementMethod =
+            LinkMovementMethod.getInstance()
+    }
+
     private fun render(state: UiState) = with(binding) {
         deviceCard.visibility = View.GONE
-        wifiCard.visibility = View.GONE
         progress.visibility = View.GONE
         actionButton.visibility = View.GONE
-        if (state !is UiState.Ready) wifiSetupAttempted = false
+        // Visible the moment the app opens so credentials can be typed before a device
+        // is plugged in; hidden only once there's nothing left to edit.
+        wifiCard.visibility = if (state is UiState.Busy || state is UiState.Done) {
+            View.GONE
+        } else {
+            View.VISIBLE
+        }
 
         when (state) {
             is UiState.WaitingForDevice -> {
@@ -204,18 +234,6 @@ class MainActivity : AppCompatActivity() {
                 deviceModel.text = state.model
                 deviceChip.text = state.chipAndFlash
                 firmwareName.text = "${state.firmwareName}\nversion ${state.firmwareVersion}"
-
-                wifiCard.visibility = View.VISIBLE
-                if (!wifiSetupAttempted) {
-                    wifiSetupAttempted = true
-                    if (ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.ACCESS_FINE_LOCATION)
-                        == PackageManager.PERMISSION_GRANTED
-                    ) {
-                        prefillSsid()
-                    } else {
-                        locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
-                    }
-                }
 
                 actionButton.visibility = View.VISIBLE
                 actionButton.text = getString(R.string.flash_button)

@@ -16,8 +16,13 @@ android {
     }
 
     buildTypes {
+        // No signingConfig here on purpose: release builds are only ever produced via
+        // Android Studio's Build > Generate Signed Bundle / APK wizard, which prompts
+        // for the keystore interactively and never touches this file. A CLI
+        // `assembleRelease` therefore yields an unsigned, unusable APK by design.
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
