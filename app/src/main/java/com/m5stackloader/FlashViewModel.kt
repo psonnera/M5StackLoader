@@ -140,18 +140,34 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) {
                     _state.value = UiState.Busy("Preparing the device...", 0)
 
-                    // The stub is Espressif's own fast flasher; if it refuses to start we
-                    // can still flash with the ROM bootloader, just more slowly.
+                    // Start from a chip we have just reset, not from whatever state detection
+                    // left it in: the Ready screen can sit for minutes, and anything detection
+                    // did to the ROM would otherwise be inherited by the burn.
+                    espLoader.connect()
+                    espLoader.detectChip()
+
+                    // The stub is Espressif's own fast flasher; if it refuses to start we can
+                    // still flash with the ROM bootloader, just more slowly. But we cannot
+                    // simply carry on: by the time the stub fails to announce itself, the ROM
+                    // has already jumped into it, and a half-started stub answers in a
+                    // different dialect than the ROM does. Reset the chip back into its ROM
+                    // bootloader so the fallback starts from a state we understand.
                     try {
                         val stub = StubFlasher.load(getApplication<Application>().assets, target)
                         espLoader.runStub(stub)
                     } catch (e: Exception) {
                         note("Falling back to the slower ROM flasher: ${e.message}")
+                        espLoader.connect()
+                        espLoader.detectChip()
                     }
 
                     espLoader.changeBaud(EspLoader.ESP_FLASH_BAUD)
                     espLoader.spiAttach()
                     espLoader.setFlashParameters(flashSize)
+
+                    // A flash whose block-protection bits are set refuses every erase, and no
+                    // retry gets past it. Check before writing rather than after failing.
+                    espLoader.unlockFlash()
 
                     for (part in parts) {
                         espLoader.writeFlash(part.bytes, part.offset) { written, _ ->

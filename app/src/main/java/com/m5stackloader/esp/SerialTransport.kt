@@ -73,9 +73,19 @@ class UsbSerialTransport(
     override fun purge() {
         // Not every driver implements the buffer purge ioctl; draining by hand always works.
         runCatching { port.purgeHwBuffers(true, true) }
+
+        // A single empty read isn't proof the line is quiet - it can land in a gap between
+        // two bursts of a reply flood. Require a few consecutive empty reads before calling
+        // it drained, with a hard cap so a wedged device can't hang this forever.
         val scratch = ByteArray(256)
-        while (port.read(scratch, 20) > 0) {
-            // keep draining
+        val deadline = System.currentTimeMillis() + PURGE_TIMEOUT_MS
+        var consecutiveEmpty = 0
+        while (consecutiveEmpty < PURGE_QUIET_READS && System.currentTimeMillis() < deadline) {
+            if (port.read(scratch, PURGE_READ_TIMEOUT_MS) > 0) {
+                consecutiveEmpty = 0
+            } else {
+                consecutiveEmpty++
+            }
         }
     }
 
@@ -87,5 +97,8 @@ class UsbSerialTransport(
     companion object {
         const val ESPRESSIF_VID = 0x303A
         private const val WRITE_TIMEOUT_MS = 3000
+        private const val PURGE_READ_TIMEOUT_MS = 20
+        private const val PURGE_QUIET_READS = 3
+        private const val PURGE_TIMEOUT_MS = 500
     }
 }
