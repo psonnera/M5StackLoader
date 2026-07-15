@@ -94,8 +94,11 @@ The app speaks Espressif's serial bootloader protocol directly:
   setup step needed. It's built and flashed alongside the firmware, not sent to it afterward.
 - **Finding the device afterward** can't rely on its hostname resolving automatically:
   M5_NightscoutMon calls only `MDNS.begin()` — no NetBIOS, no advertised service — so nothing
-  Android does out of the box turns `m5ns.local` into an IP. The app sends its own mDNS query
-  and parses the reply itself.
+  Android does out of the box reliably turns `m5ns.local` into an IP. The app sends its own
+  one-shot mDNS query from an ephemeral port, which obliges the device to answer by direct
+  unicast (RFC 6762 §6.7) — no multicast reception needed, which phone Wi-Fi chips often drop.
+  If that query goes unanswered it also tries the system resolver before giving up, and the
+  app's log says which path found the device.
 - **Firmware caching** re-validates each cached binary with a conditional HTTP request
   (ETag) rather than trusting "present on disk", since the firmware repository's `master`
   can gain new commits under an unbumped version string.

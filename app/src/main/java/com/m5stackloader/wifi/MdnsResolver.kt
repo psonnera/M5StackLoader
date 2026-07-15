@@ -9,37 +9,43 @@
 package com.m5stackloader.wifi
 
 import android.content.Context
-import android.net.ConnectivityManager
 import android.net.Network
 import android.net.wifi.WifiManager
+import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.net.DatagramPacket
+import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.MulticastSocket
-import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 
 /**
- * Resolves an mDNS ".local" hostname to an IP address by sending our own query over
- * multicast, rather than relying on the OS/browser to do it. M5_NightscoutMon calls only
- * `MDNS.begin()` - no NetBIOS, no `MDNS.addService()` - so a bare hostname never resolves on
- * Android (no NetBIOS/LLMNR client) and there is no advertised service for NsdManager to find.
- * `.local` resolution via Android's own resolver is otherwise only reliable from API 31 on.
+ * Resolves an mDNS ".local" hostname to an IP address by sending our own query, rather than
+ * relying on the OS/browser to do it. M5_NightscoutMon calls only `MDNS.begin()` - no NetBIOS,
+ * no `MDNS.addService()` - so a bare hostname never resolves on Android (no NetBIOS/LLMNR
+ * client) and there is no advertised service for NsdManager to find. `.local` resolution via
+ * Android's own resolver is otherwise only reliable from API 31 on.
+ *
+ * The query is a "legacy one-shot" (RFC 6762 section 6.7): sent from an ephemeral port, which
+ * obliges the responder to reply *unicast* straight back to that port. This matters. A socket
+ * on port 5353 never hears the answer on a phone: unicast replies to 5353 are delivered to
+ * Android's own mDNS daemon that co-owns the port, and multicast replies are dropped by Wi-Fi
+ * chips' multicast filters even under a MulticastLock. Verified against a live device: the
+ * same query answered instantly from an ephemeral port and got silence from 5353.
  */
 object MdnsResolver {
 
+    private const val TAG = "MdnsResolver"
     private const val MDNS_PORT = 5353
     private const val MDNS_GROUP = "224.0.0.251"
     private const val ATTEMPTS = 3
-    private const val ATTEMPT_TIMEOUT_MS = 300
+    private const val ATTEMPT_TIMEOUT_MS = 1000
 
-    /** Builds a one-shot mDNS query for "<hostname>.local", type A, requesting a unicast reply. */
+    /** Builds a legacy one-shot mDNS query for "<hostname>.local", type A, class IN. */
     internal fun buildQuery(hostname: String): ByteArray {
         val out = ByteArrayOutputStream()
-        out.write(byteArrayOf(0, 0)) // ID
+        out.write(byteArrayOf(0, 0)) // ID (responders echo it; we don't need to check)
         out.write(byteArrayOf(0, 0)) // flags: standard query
         out.write(byteArrayOf(0, 1)) // QDCOUNT = 1
         out.write(byteArrayOf(0, 0)) // ANCOUNT
@@ -47,16 +53,16 @@ object MdnsResolver {
         out.write(byteArrayOf(0, 0)) // ARCOUNT
         out.write(encodeQName("$hostname.local"))
         out.write(byteArrayOf(0, 1)) // QTYPE = A
-        // QCLASS = IN(1) with the top "QU" bit set: ask for a unicast reply where supported,
-        // though we also join the multicast group so a plain multicast reply is caught too.
-        out.write(byteArrayOf(0x80.toByte(), 1))
+        out.write(byteArrayOf(0, 1)) // QCLASS = IN (no QU bit: from an ephemeral port the
+        //                              reply is unicast by spec, no need to ask)
         return out.toByteArray()
     }
 
     /**
      * Extracts the first A record for "<hostname>.local" from a received mDNS packet.
      * Returns null for anything malformed, truncated, or not naming our host - untrusted
-     * network input, so no assumption about the sender is trusted.
+     * network input, so no assumption about the sender is trusted. Name comparison is
+     * case-insensitive: the firmware answers "m5ns" queries with "M5NS.local".
      */
     internal fun parseResponse(packet: ByteArray, length: Int, hostname: String): InetAddress? {
         return try {
@@ -97,6 +103,9 @@ object MdnsResolver {
      */
     suspend fun resolve(context: Context, network: Network, hostname: String): InetAddress? =
         withContext(Dispatchers.IO) {
+            // Only the outbound multicast leg could be affected by a Wi-Fi chip's multicast
+            // gating; the reply comes back unicast. Held anyway - it is cheap and some OEM
+            // stacks are eccentric about multicast in either direction.
             val wifiManager = context.applicationContext
                 .getSystemService(Context.WIFI_SERVICE) as? WifiManager
             val lock = wifiManager?.createMulticastLock("m5stackloader-mdns")?.apply {
@@ -104,36 +113,28 @@ object MdnsResolver {
                 acquire()
             }
             try {
-                resolveOnce(context, network, hostname)
+                resolveOnce(network, hostname)
             } finally {
                 lock?.release()
             }
         }
 
-    private fun resolveOnce(context: Context, network: Network, hostname: String): InetAddress? {
+    private fun resolveOnce(network: Network, hostname: String): InetAddress? {
         return try {
-            val connectivityManager =
-                context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-            val interfaceName = connectivityManager.getLinkProperties(network)?.interfaceName
-                ?: return null
-            val networkInterface = NetworkInterface.getByName(interfaceName) ?: return null
-            val group = InetAddress.getByName(MDNS_GROUP)
-            val groupAddress = InetSocketAddress(group, MDNS_PORT)
-
-            val socket = MulticastSocket(null)
+            val socket = DatagramSocket(0) // ephemeral port: the whole point, see class doc
             try {
-                socket.reuseAddress = true
-                socket.bind(InetSocketAddress(MDNS_PORT))
+                // Routes the query out the Wi-Fi interface even when mobile data is the
+                // default network - the Android equivalent of binding to the interface IP.
                 network.bindSocket(socket)
-                socket.joinGroup(groupAddress, networkInterface)
                 socket.soTimeout = ATTEMPT_TIMEOUT_MS
 
+                val group = InetAddress.getByName(MDNS_GROUP)
                 val query = buildQuery(hostname)
                 val queryPacket = DatagramPacket(query, query.size, group, MDNS_PORT)
                 val buffer = ByteArray(512)
                 val responsePacket = DatagramPacket(buffer, buffer.size)
 
-                repeat(ATTEMPTS) {
+                repeat(ATTEMPTS) { attempt ->
                     socket.send(queryPacket)
                     val deadline = System.currentTimeMillis() + ATTEMPT_TIMEOUT_MS
                     while (System.currentTimeMillis() < deadline) {
@@ -145,12 +146,14 @@ object MdnsResolver {
                         val address = parseResponse(buffer, responsePacket.length, hostname)
                         if (address != null) return address
                     }
+                    Log.d(TAG, "no answer for $hostname.local (attempt ${attempt + 1}/$ATTEMPTS)")
                 }
                 null
             } finally {
                 socket.close()
             }
         } catch (e: Exception) {
+            Log.d(TAG, "mDNS query for $hostname.local failed", e)
             null
         }
     }

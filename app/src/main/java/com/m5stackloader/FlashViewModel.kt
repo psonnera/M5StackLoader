@@ -37,8 +37,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
 
 sealed interface UiState {
     /** Nothing plugged in, or waiting for the user to allow access to it. */
@@ -235,33 +233,63 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
             capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         } ?: return@withContext null
 
+        note("Looking for $CONFIG_HOSTNAME.local on the Wi-Fi network...")
         repeat(CONFIG_PROBE_ATTEMPTS) { attempt ->
+            // Our own resolver first; then, belt and braces, the OS resolver (Android 12+
+            // can often do .local itself). Logged distinctly so a bug in our own resolver
+            // stays visible in the log instead of being silently masked.
             val address = MdnsResolver.resolve(getApplication(), wifiNetwork, CONFIG_HOSTNAME)
+                ?.also { note("Found the device at ${it.hostAddress}.") }
+                ?: systemResolve(wifiNetwork)
+                    ?.also { note("Found the device at ${it.hostAddress} (via the system resolver).") }
+
             if (address != null) {
-                val url = "http://${address.hostAddress}/"
-                if (probeConfigSite(wifiNetwork, url)) return@withContext url
+                if (probeConfigSite(wifiNetwork, address)) {
+                    return@withContext "http://${address.hostAddress}/"
+                }
+                note("The device is not serving its web page yet, retrying...")
+            } else if ((attempt + 1) % 5 == 0) {
+                note("Still looking (attempt ${attempt + 1} of $CONFIG_PROBE_ATTEMPTS)...")
             }
             if (attempt < CONFIG_PROBE_ATTEMPTS - 1) delay(CONFIG_PROBE_INTERVAL_MS)
         }
+        note("Could not find the device on the network.")
         null
     }
 
-    private fun probeConfigSite(network: android.net.Network, url: String): Boolean = try {
-        val connection = network.openConnection(URL(url)) as HttpURLConnection
-        connection.apply {
-            requestMethod = "HEAD"
-            connectTimeout = CONFIG_PROBE_TIMEOUT_MS
-            readTimeout = CONFIG_PROBE_TIMEOUT_MS
-            useCaches = false
+    private fun systemResolve(network: android.net.Network): java.net.InetAddress? = try {
+        network.getAllByName("$CONFIG_HOSTNAME.local").firstOrNull { it is java.net.Inet4Address }
+    } catch (e: Exception) {
+        null
+    }
+
+    /**
+     * "Is the device's web server up?" as a bare TCP connect to port 80. Deliberately not an
+     * HTTP request: this app targets API 28+, where Android's default policy blocks cleartext
+     * http:// from app code (so HttpURLConnection would fail unconditionally - the page still
+     * opens fine in the browser, which has its own policy), and a TCP accept is also more
+     * forgiving than a short HTTP timeout against the ESP32's slow web server.
+     */
+    private fun probeConfigSite(
+        network: android.net.Network,
+        address: java.net.InetAddress,
+    ): Boolean = try {
+        network.socketFactory.createSocket().use { socket ->
+            socket.connect(java.net.InetSocketAddress(address, 80), CONFIG_PROBE_TIMEOUT_MS)
+            true
         }
-        connection.responseCode // any response at all means the site is up
-        connection.disconnect()
-        true
     } catch (e: Exception) {
         false
     }
 
     fun onDeviceDetached() {
+        // The Done screen invites the user to unplug; doing so must not wipe it (the
+        // config-site offer is still in flight). Plugging a device back in starts a
+        // fresh detection cycle from Done just as it would from WaitingForDevice.
+        if (_state.value is UiState.Done) {
+            closeDevice()
+            return
+        }
         job?.cancel()
         closeDevice()
         _state.value = UiState.WaitingForDevice(PLUG_IN_PROMPT)

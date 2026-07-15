@@ -290,6 +290,16 @@ class MainActivity : AppCompatActivity() {
                 actionButton.setOnClickListener {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
+            } else {
+                statusDetail.append("\n" + getString(R.string.config_not_found))
+                // Discovery is the last thing that happens after a flash; without this the
+                // screen would dead-end here (unplugging deliberately no longer resets it).
+                actionButton.visibility = View.VISIBLE
+                actionButton.text = getString(R.string.start_over_button)
+                actionButton.setOnClickListener {
+                    viewModel.reset()
+                    connectToAttachedDevice()
+                }
             }
         }
     }

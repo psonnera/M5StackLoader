@@ -8,26 +8,46 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 /**
- * Exercises the mDNS query/response codec in isolation from any real socket. [buildQuery] is
- * checked against bytes actually captured from a query this app sent and the M5Stack answered
- * on a live LAN; [parseResponse] is checked against the real IP that query resolved to
- * (192.168.1.199), so a change here that silently breaks resolution against real firmware
- * output should show up as a test failure, not a field report.
+ * Exercises the mDNS query/response codec in isolation from any real socket. Both fixtures
+ * come from a live exchange with an M5_NightscoutMon device: [REAL_QUERY] is the exact query
+ * that device answered, and [REAL_REPLY] is its verbatim 54-byte unicast answer resolving
+ * m5ns.local to 192.168.1.199. A codec change that breaks against real firmware output fails
+ * here, not in the field.
  */
 class MdnsResolverTest {
 
-    @Test
-    fun `buildQuery matches bytes a real device answered on the LAN`() {
-        // Captured with Resolve-DnsName/manual mDNS probe against a live M5_NightscoutMon
-        // device (see plan history) - 04 "m5ns" 05 "local" 00, QTYPE=A, QCLASS=IN with QU bit.
-        val expected = hex(
+    private companion object {
+        /** The legacy one-shot query (ephemeral source port, QCLASS plain IN) a live device answered. */
+        val REAL_QUERY = hex(
             "00 00 00 00 00 01 00 00 00 00 00 00 04 6d 35 6e 73 " +
-                "05 6c 6f 63 61 6c 00 00 01 80 01"
+                "05 6c 6f 63 61 6c 00 00 01 00 01"
         )
 
-        val query = MdnsResolver.buildQuery("m5ns")
+        /**
+         * The device's actual unicast reply, captured verbatim: question echoed, then an answer
+         * whose name is written out in full as "M5NS.local" - uppercase, so case-insensitive
+         * matching is load-bearing - with TTL 120 and RDATA 192.168.1.199.
+         */
+        val REAL_REPLY = hex(
+            "00 00 84 00 00 01 00 01 00 00 00 00 04 6d 35 6e 73 05 6c 6f 63 61 6c 00 " +
+                "00 01 00 01 04 4d 35 4e 53 05 6c 6f 63 61 6c 00 00 01 00 01 00 00 00 78 " +
+                "00 04 c0 a8 01 c7"
+        )
 
-        assertArrayEquals(expected, query)
+        fun hex(s: String): ByteArray =
+            s.trim().split(Regex("\\s+")).map { it.toInt(16).toByte() }.toByteArray()
+    }
+
+    @Test
+    fun `buildQuery matches the query a real device answered on the LAN`() {
+        assertArrayEquals(REAL_QUERY, MdnsResolver.buildQuery("m5ns"))
+    }
+
+    @Test
+    fun `parseResponse decodes the real captured device reply, uppercase name and all`() {
+        val address = MdnsResolver.parseResponse(REAL_REPLY, REAL_REPLY.size, "m5ns")
+
+        assertEquals("192.168.1.199", address?.hostAddress)
     }
 
     @Test
@@ -44,23 +64,22 @@ class MdnsResolverTest {
     }
 
     @Test
-    fun `parseResponse finds the A record when the answer name is written out in full`() {
-        val packet = responseBuilder(includeQuestion = false) {
-            writeName("m5ns.local")
-            writeAnswerBody(ip = byteArrayOf(192.toByte(), 168.toByte(), 1, 199.toByte()))
+    fun `parseResponse ignores the transaction ID a legacy responder echoes back`() {
+        val packet = responseBuilder(includeQuestion = true) {
+            writeBytes(0xC0, 0x0C)
+            writeAnswerBody(ip = byteArrayOf(10, 0, 0, 7))
         }
+        packet[0] = 0xAB.toByte() // nonzero echoed ID must not confuse the parser
+        packet[1] = 0xCD.toByte()
 
         val address = MdnsResolver.parseResponse(packet, packet.size, "m5ns")
 
-        assertEquals("192.168.1.199", address?.hostAddress)
+        assertEquals("10.0.0.7", address?.hostAddress)
     }
 
     @Test
     fun `parseResponse returns null for a truncated packet`() {
-        val packet = responseBuilder(includeQuestion = true) {
-            writeBytes(0xC0, 0x0C)
-            writeAnswerBody(ip = byteArrayOf(192.toByte(), 168.toByte(), 1, 199.toByte()))
-        }.copyOf(15) // cut off mid-answer
+        val packet = REAL_REPLY.copyOf(20) // cut off mid-question
 
         val address = MdnsResolver.parseResponse(packet, packet.size, "m5ns")
 
@@ -78,9 +97,6 @@ class MdnsResolverTest {
 
         assertNull(address)
     }
-
-    private fun hex(s: String): ByteArray =
-        s.trim().split(Regex("\\s+")).map { it.toInt(16).toByte() }.toByteArray()
 
     /**
      * Builds a minimal mDNS response: header, optionally the mirrored question for "m5ns.local",
