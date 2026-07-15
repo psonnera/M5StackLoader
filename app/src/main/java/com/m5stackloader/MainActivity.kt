@@ -282,13 +282,13 @@ class MainActivity : AppCompatActivity() {
     private fun offerConfigSite(state: UiState.Done) = with(binding) {
         statusDetail.append("\n" + getString(R.string.config_checking))
         lifecycleScope.launch {
-            val reachable = viewModel.configSiteReachable()
+            val url = viewModel.configSiteUrl()
             if (viewModel.state.value !== state) return@launch
-            if (reachable) {
+            if (url != null) {
                 actionButton.visibility = View.VISIBLE
                 actionButton.text = getString(R.string.open_config_button)
                 actionButton.setOnClickListener {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(FlashViewModel.CONFIG_URL)))
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
             }
         }

@@ -4,6 +4,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Needed to hold a MulticastLock while resolving the device's mDNS hostname; a
+         normal permission, granted at install with no runtime prompt. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Reading the phone's current SSID requires location permission on every
          supported API level, even though the app never uses location data itself.
          COARSE must accompany FINE from Android 12 on (the user may grant only COARSE). -->

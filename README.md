@@ -40,8 +40,8 @@ first boot without any manual setup on the device itself.
 4. Check the model and firmware shown, then tap **Flash**. A progress bar and a scrollable
    log show what's happening; don't unplug the device while this runs.
 5. The device reboots into M5_NightscoutMon — you can unplug it. If you set up Wi-Fi, the app
-   checks whether the device has joined your network and its on-device config page is
-   reachable at `http://m5ns`; if so, it offers to open that page in your browser.
+   looks for it on the network by its mDNS name (`m5ns.local`) and checks that its on-device
+   config page answers; if so, it offers to open that page in your browser.
 
 ## How it decides what to flash
 
@@ -92,6 +92,10 @@ The app speaks Espressif's serial bootloader protocol directly:
 - **Wi-Fi provisioning** writes an NVS partition image containing the SSID/password under
   the `M5NSconfig` namespace M5_NightscoutMon reads at boot — no serial console or on-device
   setup step needed. It's built and flashed alongside the firmware, not sent to it afterward.
+- **Finding the device afterward** can't rely on its hostname resolving automatically:
+  M5_NightscoutMon calls only `MDNS.begin()` — no NetBIOS, no advertised service — so nothing
+  Android does out of the box turns `m5ns.local` into an IP. The app sends its own mDNS query
+  and parses the reply itself.
 - **Firmware caching** re-validates each cached binary with a conditional HTTP request
   (ETag) rather than trusting "present on disk", since the firmware repository's `master`
   can gain new commits under an unbumped version string.
