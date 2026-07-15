@@ -17,6 +17,7 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.Uri
 import android.os.Bundle
 import android.text.method.LinkMovementMethod
 import android.view.View
@@ -27,6 +28,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.core.text.HtmlCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -82,6 +86,13 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Keep content (notably the log) above the soft nav bar instead of under it.
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.updatePadding(bottom = bars.bottom)
+            insets
+        }
+
         val filter = IntentFilter().apply {
             addAction(ACTION_USB_PERMISSION)
             addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
@@ -113,6 +124,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     viewModel.log.collect { lines ->
                         binding.logView.text = lines.joinToString("\n")
+                        binding.logScroll.post { binding.logScroll.fullScroll(View.FOCUS_DOWN) }
                     }
                 }
             }
@@ -246,6 +258,7 @@ class MainActivity : AppCompatActivity() {
                     append("${state.model} has been flashed and is restarting. You can unplug it.")
                     if (state.wifiConfigured) append(" It will join your Wi-Fi network automatically.")
                 }
+                if (state.wifiConfigured) offerConfigSite(state)
             }
 
             is UiState.Failed -> {
@@ -256,6 +269,26 @@ class MainActivity : AppCompatActivity() {
                 actionButton.setOnClickListener {
                     viewModel.reset()
                     connectToAttachedDevice()
+                }
+            }
+        }
+    }
+
+    /**
+     * Polls for the device's config web UI and, once it answers, offers to open it. Guards
+     * against the user having unplugged or retried before the probe finishes by checking the
+     * state is still this exact [Done] instance before touching the UI.
+     */
+    private fun offerConfigSite(state: UiState.Done) = with(binding) {
+        statusDetail.append("\n" + getString(R.string.config_checking))
+        lifecycleScope.launch {
+            val reachable = viewModel.configSiteReachable()
+            if (viewModel.state.value !== state) return@launch
+            if (reachable) {
+                actionButton.visibility = View.VISIBLE
+                actionButton.text = getString(R.string.open_config_button)
+                actionButton.setOnClickListener {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(FlashViewModel.CONFIG_URL)))
                 }
             }
         }

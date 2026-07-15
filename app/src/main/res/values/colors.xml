@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#FF1B1F27</color>
+    <!-- White so the inset foreground's white-ground artwork blends into one clean icon. -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
 
     <!-- Both logos are supplied as artwork on a white ground, so they sit on a white
          badge in either theme rather than being recoloured. -->

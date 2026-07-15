@@ -12,6 +12,8 @@ import android.app.Application
 import android.content.Context
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.m5stackloader.esp.Chip
@@ -27,12 +29,15 @@ import com.m5stackloader.firmware.FirmwareVariant
 import com.m5stackloader.firmware.PartitionTable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 sealed interface UiState {
     /** Nothing plugged in, or waiting for the user to allow access to it. */
@@ -211,6 +216,44 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         return NvsImage.build(partitionSize, WIFI_NVS_NAMESPACE, strings)
     }
 
+    /**
+     * The M5Stack's own config web UI, reachable once it has rejoined Wi-Fi with the
+     * credentials we just wrote (M5_NightscoutMon advertises the mDNS/NetBIOS hostname
+     * "m5ns"). Polls for a while since the reboot-and-associate dance takes a few seconds,
+     * and is bound to the phone's own Wi-Fi network so the bare hostname resolves on the LAN
+     * even when mobile data is also active.
+     */
+    suspend fun configSiteReachable(): Boolean = withContext(Dispatchers.IO) {
+        val connectivityManager = getApplication<Application>()
+            .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = connectivityManager.activeNetwork ?: return@withContext false
+        val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+        val wifiNetwork = activeNetwork.takeIf {
+            capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        } ?: return@withContext false
+
+        repeat(CONFIG_PROBE_ATTEMPTS) { attempt ->
+            if (probeConfigSite(wifiNetwork)) return@withContext true
+            if (attempt < CONFIG_PROBE_ATTEMPTS - 1) delay(CONFIG_PROBE_INTERVAL_MS)
+        }
+        false
+    }
+
+    private fun probeConfigSite(network: android.net.Network): Boolean = try {
+        val connection = network.openConnection(URL(CONFIG_URL)) as HttpURLConnection
+        connection.apply {
+            requestMethod = "HEAD"
+            connectTimeout = CONFIG_PROBE_TIMEOUT_MS
+            readTimeout = CONFIG_PROBE_TIMEOUT_MS
+            useCaches = false
+        }
+        connection.responseCode // any response at all means the site is up
+        connection.disconnect()
+        true
+    } catch (e: Exception) {
+        false
+    }
+
     fun onDeviceDetached() {
         job?.cancel()
         closeDevice()
@@ -267,9 +310,14 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         super.onCleared()
     }
 
-    private companion object {
-        const val PLUG_IN_PROMPT = "Plug your M5Stack into this phone with a USB cable."
-        const val MAX_LOG_LINES = 200
-        const val WIFI_NVS_NAMESPACE = "M5NSconfig"
+    companion object {
+        const val CONFIG_URL = "http://m5ns/"
+
+        private const val PLUG_IN_PROMPT = "Plug your M5Stack into this phone with a USB cable."
+        private const val MAX_LOG_LINES = 200
+        private const val WIFI_NVS_NAMESPACE = "M5NSconfig"
+        private const val CONFIG_PROBE_ATTEMPTS = 15
+        private const val CONFIG_PROBE_INTERVAL_MS = 2000L
+        private const val CONFIG_PROBE_TIMEOUT_MS = 2000
     }
 }

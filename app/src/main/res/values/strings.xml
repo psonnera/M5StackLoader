@@ -12,6 +12,8 @@
     <string name="wifi_password_hint">Leave empty for an open network</string>
     <string name="wifi_password_error">Password must be empty or 8–63 characters</string>
     <string name="wifi_privacy_link">Why do we ask for this?</string>
+    <string name="open_config_button">Open device configuration</string>
+    <string name="config_checking">Looking for your device on the network…</string>
     <string name="wifi_privacy_title">About your Wi-Fi password</string>
     <string name="wifi_privacy_body"><![CDATA[
         Your Wi-Fi network name and password are written only to your M5Stack, over the

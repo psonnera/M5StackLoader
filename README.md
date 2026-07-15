@@ -1,11 +1,47 @@
 # M5Stack Loader
 
+## ⚠️ Disclaimer
+
+**This app was built almost entirely by an LLM coding assistant** (Claude, via Claude Code) —
+the flashing protocol implementation, the UI, and this document. A human (the repo owner)
+directed the work, reviewed the changes, and tested it against real M5Stack hardware, but the
+code has not had an independent security or safety audit.
+
+Flashing overwrites the bootloader-level firmware of a physical device. A failed or
+interrupted write can leave it unbootable, and while the app includes a ROM-bootloader
+fallback and MD5 verification specifically to guard against that, no software guarantee is
+absolute. **Use it at your own risk.** It is provided with no warranty of any kind — see
+[`LICENSE`](LICENSE). If something looks wrong, please open an issue rather than assuming the
+code is correct because an AI wrote it.
+
+## What it does
+
 An Android app that flashes [M5_NightscoutMon](https://github.com/psonnera/M5_NightscoutMon)
 onto an M5Stack over USB, with as little fuss as possible: plug the device into the phone,
 confirm what was found, tap **Flash**.
 
 The app works out which M5Stack you have, downloads the matching binaries from the firmware
-repository, and burns them. You never pick a model or a file.
+repository, and burns them. You never pick a model or a file. It can also write your phone's
+Wi-Fi credentials into the device as part of the same flash, so it joins your network on
+first boot without any manual setup on the device itself.
+
+## How to use it
+
+1. Plug the M5Stack into the phone with a USB-OTG cable or adapter. Android offers to open
+   M5Stack Loader — allow it (tick "use by default" to skip this prompt next time). If it
+   doesn't prompt, open the app manually with the device attached.
+2. Before or after plugging in, optionally fill in your Wi-Fi network name and password (the
+   app tries to prefill the SSID from what the phone is currently connected to). Leave the
+   checkbox on to have those credentials written to the device; tap "Why do we ask for this?"
+   for the privacy details — they never leave the phone except onto the device over USB.
+3. The app resets the device into its bootloader, identifies the model and flash size, and
+   fetches the matching firmware build (cached after the first run, re-validated against the
+   server on later ones).
+4. Check the model and firmware shown, then tap **Flash**. A progress bar and a scrollable
+   log show what's happening; don't unplug the device while this runs.
+5. The device reboots into M5_NightscoutMon — you can unplug it. If you set up Wi-Fi, the app
+   checks whether the device has joined your network and its on-device config page is
+   reachable at `http://m5ns`; if so, it offers to open that page in your browser.
 
 ## How it decides what to flash
 
@@ -38,16 +74,6 @@ Anything else — an 8MB ESP32, an unknown chip — is refused rather than guess
 ./gradlew testDebugUnitTest      # protocol + manifest tests
 ```
 
-## Using it
-
-1. Plug the M5Stack into the phone. Android offers to open M5Stack Loader — say yes
-   (tick "use by default" and you skip this next time).
-2. The app resets the device into its bootloader, identifies it, and fetches the firmware.
-3. Check the model and firmware shown, then tap **Flash**.
-4. The device reboots into M5_NightscoutMon. Unplug it.
-
-If the phone does not offer to open the app, launch it manually with the device attached.
-
 ## How it works
 
 The app speaks Espressif's serial bootloader protocol directly:
@@ -63,6 +89,12 @@ The app speaks Espressif's serial bootloader protocol directly:
   writing zlib-compressed 16KB blocks. If the stub refuses to start, it falls back to the
   ROM bootloader, which is slower but works. Every image is verified by MD5 against the
   device before the app reports success.
+- **Wi-Fi provisioning** writes an NVS partition image containing the SSID/password under
+  the `M5NSconfig` namespace M5_NightscoutMon reads at boot — no serial console or on-device
+  setup step needed. It's built and flashed alongside the firmware, not sent to it afterward.
+- **Firmware caching** re-validates each cached binary with a conditional HTTP request
+  (ETag) rather than trusting "present on disk", since the firmware repository's `master`
+  can gain new commits under an unbumped version string.
 
 `EspLoader` has no Android dependencies, so it is tested on the JVM against `FakeEspRom`, an
 in-memory bootloader that inflates the blocks it is sent and answers MD5 with a digest of
