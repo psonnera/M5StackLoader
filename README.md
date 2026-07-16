@@ -126,3 +126,7 @@ into the APK.
 
 Full attribution, including the licence texts these works require to be carried with the
 software, is in [`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).
+
+## Donations
+
+You liked this utility? Don't hesitate to donate to the [Nightscout Foundation](https://www.nightscoutfoundation.org/donate), to sponsor real developers (unlike me) and fantastic projects.
