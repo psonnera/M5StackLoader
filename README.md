@@ -40,8 +40,9 @@ first boot without any manual setup on the device itself.
 4. Check the model and firmware shown, then tap **Flash**. A progress bar and a scrollable
    log show what's happening; don't unplug the device while this runs.
 5. The device reboots into M5_NightscoutMon — you can unplug it. If you set up Wi-Fi, the app
-   looks for it on the network by its mDNS name (`m5ns.local`) and checks that its on-device
-   config page answers; if so, it offers to open that page in your browser.
+   looks for it on the network by its unique mDNS name (`m5ns-xxxx.local`, `xxxx` derived from
+   the device's MAC address) and checks that its on-device config page answers; if so, it
+   offers to open that page in your browser.
 
 ## How it decides what to flash
 
@@ -89,14 +90,18 @@ The app speaks Espressif's serial bootloader protocol directly:
   writing zlib-compressed 16KB blocks. If the stub refuses to start, it falls back to the
   ROM bootloader, which is slower but works. Every image is verified by MD5 against the
   device before the app reports success.
-- **Wi-Fi provisioning** writes an NVS partition image containing the SSID/password under
-  the `M5NSconfig` namespace M5_NightscoutMon reads at boot — no serial console or on-device
-  setup step needed. It's built and flashed alongside the firmware, not sent to it afterward.
+- **Wi-Fi provisioning** writes an NVS partition image containing the SSID/password, and a
+  `device_name` derived from the chip's MAC address (read over the bootloader protocol) so
+  the device gets a name unique to it, under the `M5NSconfig` namespace M5_NightscoutMon
+  reads at boot — no serial console or on-device setup step needed. It's built and flashed
+  alongside the firmware, not sent to it afterward.
 - **Finding the device afterward** can't rely on its hostname resolving automatically:
   M5_NightscoutMon calls only `MDNS.begin()` — no NetBIOS, no advertised service — so nothing
-  Android does out of the box reliably turns `m5ns.local` into an IP. The app sends its own
-  one-shot mDNS query from an ephemeral port, which obliges the device to answer by direct
+  Android does out of the box reliably turns `m5ns-xxxx.local` into an IP. The app sends its
+  own one-shot mDNS query from an ephemeral port, which obliges the device to answer by direct
   unicast (RFC 6762 §6.7) — no multicast reception needed, which phone Wi-Fi chips often drop.
+  It tries the device's derived name first, then falls back to the legacy shared `m5ns.local`
+  name for devices still running older firmware.
   If that query goes unanswered it also tries the system resolver before giving up, and the
   app's log says which path found the device.
 - **Firmware caching** re-validates each cached binary with a conditional HTTP request

@@ -291,7 +291,9 @@ class MainActivity : AppCompatActivity() {
                     startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                 }
             } else {
-                statusDetail.append("\n" + getString(R.string.config_not_found))
+                statusDetail.append(
+                    "\n" + getString(R.string.config_not_found, viewModel.expectedHostname())
+                )
                 // Discovery is the last thing that happens after a flash; without this the
                 // screen would dead-end here (unplugging deliberately no longer resets it).
                 actionButton.visibility = View.VISIBLE

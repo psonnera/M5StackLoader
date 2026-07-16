@@ -169,6 +169,24 @@ class EspLoader(
         return detected
     }
 
+    /**
+     * Reads the chip's factory eFuse base MAC address (esptool `read_mac()`), used to derive
+     * a name unique to this device. Requires [detectChip] to have run first.
+     */
+    fun readMac(): ByteArray {
+        val detected = chip ?: throw IllegalStateException("readMac() called before detectChip()")
+        val low = readRegister(detected.macLowWordReg)
+        val high = readRegister(detected.macHighWordReg)
+        return byteArrayOf(
+            (high shr 8).toByte(),
+            high.toByte(),
+            (low shr 24).toByte(),
+            (low shr 16).toByte(),
+            (low shr 8).toByte(),
+            low.toByte(),
+        )
+    }
+
     // ------------------------------------------------------------------ flash
 
     /** Uploads Espressif's flasher stub into RAM and runs it. */

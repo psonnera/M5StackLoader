@@ -17,6 +17,7 @@ import android.net.NetworkCapabilities
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.m5stackloader.esp.Chip
+import com.m5stackloader.esp.DeviceName
 import com.m5stackloader.esp.EspLoader
 import com.m5stackloader.esp.FlashSizes
 import com.m5stackloader.esp.NvsImage
@@ -78,6 +79,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     private var chip: Chip? = null
     private var flashSize = 0
     private var variant: FirmwareVariant? = null
+    private var deviceMac: ByteArray? = null
     private var modelName = ""
 
     /** Identifies the attached device and works out which firmware it needs. */
@@ -101,6 +103,14 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 chip = detectedChip
                 flashSize = espLoader.flashSize
                 modelName = DeviceModel.describe(detectedChip, flashSize)
+
+                // Used to give the device a unique name (see DeviceName); non-fatal if it
+                // fails, we just fall back to the legacy shared "m5ns" name.
+                deviceMac = withContext(Dispatchers.IO) {
+                    runCatching { espLoader.readMac() }
+                        .onFailure { note("Could not read the device's MAC address: ${it.message}") }
+                        .getOrNull()
+                }
 
                 _state.value = UiState.Busy("Looking up the firmware...")
                 val variants = repository.fetchManifest()
@@ -205,24 +215,39 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * The firmware reads Wi-Fi from Preferences namespace "M5NSconfig", keys SSID0/PASS0
      * (M5NSconfig.cpp in M5_NightscoutMon) - PASS0 is omitted for an open network, exactly
-     * as the firmware's own saveConfigToFlash() does.
+     * as the firmware's own saveConfigToFlash() does. Also writes "device_name" (same
+     * namespace, same file) so even a device still running older firmware picks up its
+     * unique name - see DeviceName.
      */
     private fun buildWifiNvsImage(partitionSize: Int, wifi: WifiCredentials): ByteArray {
         val strings = buildList {
             add(NvsImage.Entry("SSID0", wifi.ssid))
             if (wifi.password.isNotEmpty()) add(NvsImage.Entry("PASS0", wifi.password))
+            deviceMac?.let { add(NvsImage.Entry("device_name", DeviceName.deviceName(it))) }
         }
         return NvsImage.build(partitionSize, WIFI_NVS_NAMESPACE, strings)
     }
 
     /**
+     * The hostname (without ".local") we expect this device to answer to: derived from its
+     * MAC (see DeviceName) when we could read one, otherwise the legacy shared name every
+     * device used before per-device names existed.
+     */
+    fun expectedHostname(): String = deviceMac?.let(DeviceName::hostname) ?: LEGACY_CONFIG_HOSTNAME
+
+    /**
      * The M5Stack's own config web UI, reachable once it has rejoined Wi-Fi with the
      * credentials we just wrote. M5_NightscoutMon advertises only mDNS (no NetBIOS, no
      * `MDNS.addService`), so a bare hostname never resolves on Android and there's no
-     * service for NsdManager to discover - we resolve "m5ns.local" ourselves and return the
+     * service for NsdManager to discover - we resolve the hostname ourselves and return the
      * IP to open. Polls for a while since the reboot-and-associate dance takes a few seconds,
      * and is bound to the phone's own Wi-Fi network so it works even when mobile data is also
      * active.
+     *
+     * Tries the derived per-device hostname first, then falls back to the legacy shared
+     * "m5ns" name so a device still running firmware from before per-device names is still
+     * found (e.g. if we flashed it without Wi-Fi credentials, so it never got a device_name
+     * write - see buildWifiNvsImage).
      */
     suspend fun configSiteUrl(): String? = withContext(Dispatchers.IO) {
         val connectivityManager = getApplication<Application>()
@@ -233,22 +258,26 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
             capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         } ?: return@withContext null
 
-        note("Looking for $CONFIG_HOSTNAME.local on the Wi-Fi network...")
+        val candidates = listOf(expectedHostname(), LEGACY_CONFIG_HOSTNAME).distinct()
+        note("Looking for ${candidates.joinToString(" or ") { "$it.local" }} on the Wi-Fi network...")
         repeat(CONFIG_PROBE_ATTEMPTS) { attempt ->
-            // Our own resolver first; then, belt and braces, the OS resolver (Android 12+
-            // can often do .local itself). Logged distinctly so a bug in our own resolver
-            // stays visible in the log instead of being silently masked.
-            val address = MdnsResolver.resolve(getApplication(), wifiNetwork, CONFIG_HOSTNAME)
-                ?.also { note("Found the device at ${it.hostAddress}.") }
-                ?: systemResolve(wifiNetwork)
-                    ?.also { note("Found the device at ${it.hostAddress} (via the system resolver).") }
+            for (hostname in candidates) {
+                // Our own resolver first; then, belt and braces, the OS resolver (Android 12+
+                // can often do .local itself). Logged distinctly so a bug in our own resolver
+                // stays visible in the log instead of being silently masked.
+                val address = MdnsResolver.resolve(getApplication(), wifiNetwork, hostname)
+                    ?.also { note("Found the device at ${it.hostAddress}.") }
+                    ?: systemResolve(wifiNetwork, hostname)
+                        ?.also { note("Found the device at ${it.hostAddress} (via the system resolver).") }
 
-            if (address != null) {
-                if (probeConfigSite(wifiNetwork, address)) {
-                    return@withContext "http://${address.hostAddress}/"
+                if (address != null) {
+                    if (probeConfigSite(wifiNetwork, address)) {
+                        return@withContext "http://${address.hostAddress}/"
+                    }
+                    note("The device is not serving its web page yet, retrying...")
                 }
-                note("The device is not serving its web page yet, retrying...")
-            } else if ((attempt + 1) % 5 == 0) {
+            }
+            if ((attempt + 1) % 5 == 0) {
                 note("Still looking (attempt ${attempt + 1} of $CONFIG_PROBE_ATTEMPTS)...")
             }
             if (attempt < CONFIG_PROBE_ATTEMPTS - 1) delay(CONFIG_PROBE_INTERVAL_MS)
@@ -257,8 +286,8 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         null
     }
 
-    private fun systemResolve(network: android.net.Network): java.net.InetAddress? = try {
-        network.getAllByName("$CONFIG_HOSTNAME.local").firstOrNull { it is java.net.Inet4Address }
+    private fun systemResolve(network: android.net.Network, hostname: String): java.net.InetAddress? = try {
+        network.getAllByName("$hostname.local").firstOrNull { it is java.net.Inet4Address }
     } catch (e: Exception) {
         null
     }
@@ -346,10 +375,12 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     companion object {
-        // The firmware's default `deviceName` (M5NSconfig.cpp); it's what MDNS.begin()
-        // registers as "<deviceName>.local". A device renamed in its own config UI won't
-        // be found by this - same limitation the old hardcoded URL had.
-        private const val CONFIG_HOSTNAME = "m5ns"
+        // The name every device used before per-device names existed (M5NSconfig.cpp's old
+        // fixed "M5NS" default); it's what MDNS.begin() registers as "<deviceName>.local".
+        // Kept as a discovery fallback for devices still running old firmware. A device
+        // renamed in its own config UI won't be found by either name - same limitation the
+        // old hardcoded URL had.
+        private const val LEGACY_CONFIG_HOSTNAME = "m5ns"
 
         private const val PLUG_IN_PROMPT = "Plug your M5Stack into this phone with a USB cable."
         private const val MAX_LOG_LINES = 200

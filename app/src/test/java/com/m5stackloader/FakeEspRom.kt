@@ -338,6 +338,11 @@ class FakeEspRom(
         written[region] = regionImage.toByteArray()
     }
 
+    /** Seeds a register the loader will READ_REG later, e.g. the eFuse MAC words. */
+    fun presetRegister(address: Int, value: Int) {
+        registers[address] = value
+    }
+
     private fun readRegister(address: Int): Int = when (address) {
         Chip.CHIP_DETECT_MAGIC_REG_ADDR -> chip.magicValues.first()
         else -> registers[address] ?: 0

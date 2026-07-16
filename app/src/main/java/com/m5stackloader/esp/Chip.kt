@@ -43,6 +43,13 @@ enum class Chip(
     val stubAsset: String,
     /** ROM .bss variable telling us which console the ROM is using; null if not applicable. */
     val uartDevBufNoReg: Int?,
+    /**
+     * eFuse registers holding the factory base MAC address (esptool `read_mac()`):
+     * [macLowWordReg] packs mac[2..5] (byte 5 in the low 8 bits), [macHighWordReg]'s
+     * low 16 bits pack mac[0..1] (byte 1 in the low 8 bits).
+     */
+    val macLowWordReg: Int,
+    val macHighWordReg: Int,
 ) {
     ESP32(
         displayName = "ESP32",
@@ -58,6 +65,8 @@ enum class Chip(
         romSupportsEncryptedFlash = false,
         stubAsset = "stub_flasher/esp32.json",
         uartDevBufNoReg = null,
+        macLowWordReg = 0x3FF5A004,
+        macHighWordReg = 0x3FF5A008,
     ),
     ESP32S3(
         displayName = "ESP32-S3",
@@ -73,6 +82,8 @@ enum class Chip(
         romSupportsEncryptedFlash = true,
         stubAsset = "stub_flasher/esp32s3.json",
         uartDevBufNoReg = 0x3FCEF14C,
+        macLowWordReg = 0x60007044,
+        macHighWordReg = 0x60007048,
     );
 
     companion object {

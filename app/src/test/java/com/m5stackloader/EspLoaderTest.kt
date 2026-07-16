@@ -87,6 +87,42 @@ class EspLoaderTest {
     }
 
     @Test
+    fun `reads the eFuse MAC address of an ESP32`() {
+        val rom = FakeEspRom(Chip.ESP32, flashCapacityByte = 0x16)
+        // esptool's read_mac() layout: the low word packs mac[2..5], the high word's low
+        // 16 bits pack mac[0..1]. A real M5Stack's OUI starts 24:6F:28 or 24:0A:C4.
+        rom.presetRegister(Chip.ESP32.macHighWordReg, 0x0000246F)
+        rom.presetRegister(Chip.ESP32.macLowWordReg, 0x28117A3F.toInt())
+        val loader = EspLoader(rom)
+
+        loader.connect()
+        loader.detectChip()
+        val mac = loader.readMac()
+
+        assertArrayEquals(
+            byteArrayOf(0x24, 0x6F, 0x28, 0x11, 0x7A, 0x3F.toByte()),
+            mac,
+        )
+    }
+
+    @Test
+    fun `reads the eFuse MAC address of an ESP32-S3, at its own register addresses`() {
+        val rom = FakeEspRom(Chip.ESP32S3, flashCapacityByte = 0x16)
+        rom.presetRegister(Chip.ESP32S3.macHighWordReg, 0x0000C4DE)
+        rom.presetRegister(Chip.ESP32S3.macLowWordReg, 0xAD01BEEF.toInt())
+        val loader = EspLoader(rom)
+
+        loader.connect()
+        loader.detectChip()
+        val mac = loader.readMac()
+
+        assertArrayEquals(
+            byteArrayOf(0xC4.toByte(), 0xDE.toByte(), 0xAD.toByte(), 0x01, 0xBE.toByte(), 0xEF.toByte()),
+            mac,
+        )
+    }
+
+    @Test
     fun `identifies an ESP32-S3, whose ROM uses a different status length`() {
         val rom = FakeEspRom(Chip.ESP32S3, flashCapacityByte = 0x18)
         val loader = EspLoader(rom)
