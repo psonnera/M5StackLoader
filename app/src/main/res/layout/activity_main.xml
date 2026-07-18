@@ -84,6 +84,126 @@
             android:gravity="center"
             android:textAppearance="?attr/textAppearanceBodyMedium" />
 
+        <!-- The opening choice: which firmware source to flash. -->
+        <LinearLayout
+            android:id="@+id/modeChooser"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/modeNightscout"
+                android:layout_width="0dp"
+                android:layout_height="112dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="@color/logo_badge_background"
+                app:strokeColor="@color/logo_badge_stroke"
+                app:strokeWidth="1dp">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_myscout"
+                    android:contentDescription="@string/mode_nightscout" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/modeXdrip"
+                android:layout_width="0dp"
+                android:layout_height="112dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="@color/logo_badge_background"
+                app:strokeColor="@color/logo_badge_stroke"
+                app:strokeWidth="1dp">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_bluetooth"
+                    android:contentDescription="@string/mode_xdrip" />
+            </com.google.android.material.card.MaterialCardView>
+
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/modeCustom"
+                android:layout_width="0dp"
+                android:layout_height="112dp"
+                android:layout_weight="1"
+                android:clickable="true"
+                android:focusable="true"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:cardBackgroundColor="@color/logo_badge_background"
+                app:strokeColor="@color/logo_badge_stroke"
+                app:strokeWidth="1dp">
+
+                <ImageView
+                    android:layout_width="56dp"
+                    android:layout_height="56dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_m5stack"
+                    android:contentDescription="@string/mode_custom" />
+            </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
+
+        <!-- Custom source: the user types a GitHub repository to flash from. -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/customRepoCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/custom_repo_prompt"
+                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/customRepoLayout"
+                    style="@style/Widget.Material3.TextInputLayout.OutlinedBox.Dense"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:hint="@string/custom_repo_hint">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/customRepoInput"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textUri"
+                        android:text="@string/custom_repo_prefix" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/customRepoContinue"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/custom_repo_continue" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/wifiCard"
             android:layout_width="match_parent"

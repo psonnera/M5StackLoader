@@ -39,7 +39,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/** Which firmware source the user chose on the opening screen. */
+enum class FlashMode { NIGHTSCOUT, XDRIP, CUSTOM }
+
 sealed interface UiState {
+    /** The opening screen: pick a firmware source before anything else happens. */
+    data object ChoosingMode : UiState
+
+    /** The custom-firmware screen: the user types a GitHub repository URL. */
+    data class EnteringRepo(val error: String? = null) : UiState
+
     /** Nothing plugged in, or waiting for the user to allow access to it. */
     data class WaitingForDevice(val message: String) : UiState
 
@@ -63,17 +72,31 @@ data class WifiCredentials(val ssid: String, val password: String)
 
 class FlashViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _state = MutableStateFlow<UiState>(UiState.WaitingForDevice(PLUG_IN_PROMPT))
+    private val _state = MutableStateFlow<UiState>(UiState.ChoosingMode)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     private val _log = MutableStateFlow<List<String>>(emptyList())
     val log: StateFlow<List<String>> = _log.asStateFlow()
 
-    private val repository = FirmwareRepository(File(application.cacheDir, "firmware"))
+    /** Root of the on-disk firmware cache; a subdirectory per mode keeps sources apart. */
+    private val cacheRoot = File(application.cacheDir, "firmware")
+
+    /** Which firmware source is in play, and the repository fetching it. Both are set the
+     *  moment a mode is chosen (the custom repository only once its URL resolves). */
+    private var mode: FlashMode? = null
+    private var repository = FirmwareRepository(File(cacheRoot, "nightscout"))
+
+    /** The chosen firmware source, for the Activity to branch Wi-Fi/EULA behaviour on. */
+    fun currentMode(): FlashMode? = mode
 
     private var transport: UsbSerialTransport? = null
     private var loader: EspLoader? = null
     private var job: Job? = null
+
+    // Resolving a custom repository runs on its own handle, not [job]: it finishes by
+    // moving to WaitingForDevice, and the detection the Activity starts on that transition
+    // must not be rejected as "already busy" by a [job] guard that saw this coroutine.
+    private var resolveJob: Job? = null
 
     // What detection found, held for the flash step.
     private var chip: Chip? = null
@@ -81,6 +104,72 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     private var variant: FirmwareVariant? = null
     private var deviceMac: ByteArray? = null
     private var modelName = ""
+
+    /**
+     * Records the chosen firmware source. Nightscout and xDripMon have fixed repositories,
+     * so they go straight to waiting for a device; the custom source needs a URL first.
+     */
+    fun selectMode(selected: FlashMode) {
+        mode = selected
+        when (selected) {
+            FlashMode.NIGHTSCOUT -> {
+                repository = FirmwareRepository(File(cacheRoot, "nightscout"))
+                _state.value = UiState.WaitingForDevice(PLUG_IN_PROMPT)
+            }
+            FlashMode.XDRIP -> {
+                repository = FirmwareRepository(File(cacheRoot, "xdrip"), XDRIP_BASE_URL)
+                _state.value = UiState.WaitingForDevice(PLUG_IN_PROMPT)
+            }
+            FlashMode.CUSTOM -> _state.value = UiState.EnteringRepo()
+        }
+    }
+
+    /**
+     * Resolves a user-entered GitHub repository into a firmware source. Accepts a
+     * `https://github.com/<owner>/<repo>` URL, probes `main` then `master` for a
+     * `Binaries/firmware.json` that names at least one supported device build, and only
+     * then moves on to detection. Anything wrong sends the user back to the input with a
+     * message rather than failing mid-flash.
+     */
+    fun submitCustomRepo(url: String) {
+        if (job?.isActive == true || resolveJob?.isActive == true) return
+        val slug = parseRepoSlug(url)
+        if (slug == null) {
+            _state.value = UiState.EnteringRepo(REPO_FORMAT_ERROR)
+            return
+        }
+
+        resolveJob = viewModelScope.launch {
+            _state.value = UiState.Busy("Checking the repository...")
+            val cache = File(cacheRoot, "custom/${slug.replace('/', '_')}")
+            var resolved: FirmwareRepository? = null
+            for (branch in CUSTOM_BRANCHES) {
+                val candidate = FirmwareRepository(cache, customBaseUrl(slug, branch))
+                val variants = runCatching { candidate.fetchManifest() }.getOrNull() ?: continue
+                if (variants.any { it.path in DeviceModel.KNOWN_PATHS }) {
+                    resolved = candidate
+                    note("Using firmware from github.com/$slug ($branch).")
+                    break
+                }
+            }
+
+            if (resolved == null) {
+                _state.value = UiState.EnteringRepo(REPO_CONTENT_ERROR)
+            } else {
+                repository = resolved
+                _state.value = UiState.WaitingForDevice(PLUG_IN_PROMPT)
+            }
+        }
+    }
+
+    /** Returns to the opening screen, abandoning any device and chosen source. */
+    fun backToChooser() {
+        job?.cancel()
+        resolveJob?.cancel()
+        closeDevice()
+        mode = null
+        _state.value = UiState.ChoosingMode
+    }
 
     /** Identifies the attached device and works out which firmware it needs. */
     fun startDetection(device: UsbDevice) {
@@ -314,8 +403,18 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
     fun onDeviceDetached() {
         // The Done screen invites the user to unplug; doing so must not wipe it (the
         // config-site offer is still in flight). Plugging a device back in starts a
-        // fresh detection cycle from Done just as it would from WaitingForDevice.
-        if (_state.value is UiState.Done) {
+        // fresh detection cycle from Done just as it would from WaitingForDevice. The
+        // opening and repo-entry screens have no device flow to reset either.
+        when (_state.value) {
+            is UiState.Done, is UiState.ChoosingMode, is UiState.EnteringRepo -> {
+                closeDevice()
+                return
+            }
+            else -> {}
+        }
+        // Don't tear down a repository check in progress (also a Busy state) just because a
+        // device was unplugged - it has no device flow to reset.
+        if (resolveJob?.isActive == true) {
             closeDevice()
             return
         }
@@ -323,6 +422,22 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         closeDevice()
         _state.value = UiState.WaitingForDevice(PLUG_IN_PROMPT)
     }
+
+    /** Turns user input into an "owner/repo" slug, or null if it isn't one. */
+    private fun parseRepoSlug(input: String): String? {
+        val trimmed = input.trim()
+            .removePrefix("https://").removePrefix("http://")
+            .removePrefix("www.").removePrefix("github.com/")
+            .removeSuffix("/").removeSuffix(".git")
+        val parts = trimmed.split("/")
+        if (parts.size != 2) return null
+        val (owner, repo) = parts
+        val allowed = Regex("[A-Za-z0-9._-]+")
+        return if (allowed.matches(owner) && allowed.matches(repo)) "$owner/$repo" else null
+    }
+
+    private fun customBaseUrl(slug: String, branch: String) =
+        "https://raw.githubusercontent.com/$slug/$branch/Binaries"
 
     fun onPermissionDenied() {
         _state.value = UiState.WaitingForDevice(
@@ -369,6 +484,9 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         _log.value = (_log.value + line).takeLast(MAX_LOG_LINES)
     }
 
+    /** Lets the Activity surface USB-attach diagnostics in the same on-screen log. */
+    fun logDiagnostic(line: String) = note(line)
+
     override fun onCleared() {
         closeDevice()
         super.onCleared()
@@ -381,6 +499,20 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
         // renamed in its own config UI won't be found by either name - same limitation the
         // old hardcoded URL had.
         private const val LEGACY_CONFIG_HOSTNAME = "m5ns"
+
+        // The xDripMon binaries live on the repo's default branch (main), unlike
+        // M5_NightscoutMon (master); both keep the same Binaries/ layout.
+        private const val XDRIP_BASE_URL =
+            "https://raw.githubusercontent.com/psonnera/M5Stack_xDripMon/main/Binaries"
+
+        // A custom repository could use either default-branch convention; try the modern
+        // one first.
+        private val CUSTOM_BRANCHES = listOf("main", "master")
+
+        private const val REPO_FORMAT_ERROR =
+            "Enter a repository as https://github.com/owner/repo"
+        private const val REPO_CONTENT_ERROR =
+            "That repository has no Binaries/firmware.json with a Basic_4MB, ESP32_16MB, or CoreS3 build."
 
         private const val PLUG_IN_PROMPT = "Plug your M5Stack into this phone with a USB cable."
         private const val MAX_LOG_LINES = 200

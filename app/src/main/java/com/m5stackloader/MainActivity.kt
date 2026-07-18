@@ -22,6 +22,7 @@ import android.os.Bundle
 import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
@@ -108,19 +109,47 @@ class MainActivity : AppCompatActivity() {
         }
         binding.wifiPrivacyLink.setOnClickListener { showWifiPrivacyDialog() }
 
-        // Ask up front, before a device is even plugged in, so the Wi-Fi fields can be
-        // filled in at leisure rather than while juggling a USB cable.
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
-            prefillSsid()
-        } else {
-            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+        binding.modeNightscout.setOnClickListener {
+            viewModel.selectMode(FlashMode.NIGHTSCOUT)
+            // Location is only used to prefill the Wi-Fi SSID, which only Nightscout needs -
+            // so it's asked for here, on choosing Nightscout, not up front for every user.
+            ensureSsidPrefill()
+            connectToAttachedDevice()
+        }
+        binding.modeXdrip.setOnClickListener {
+            viewModel.selectMode(FlashMode.XDRIP)
+            connectToAttachedDevice()
+        }
+        binding.modeCustom.setOnClickListener { viewModel.selectMode(FlashMode.CUSTOM) }
+        binding.customRepoContinue.setOnClickListener {
+            viewModel.submitCustomRepo(binding.customRepoInput.text?.toString().orEmpty())
+        }
+
+        // Back from any flow returns to the opening chooser rather than leaving the app.
+        onBackPressedDispatcher.addCallback(this) {
+            if (viewModel.state.value is UiState.ChoosingMode) {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            } else {
+                viewModel.backToChooser()
+            }
         }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                launch { viewModel.state.collect(::render) }
+                launch {
+                    var previous: UiState? = null
+                    viewModel.state.collect { state ->
+                        // The fixed sources start detection from their button handler; here we
+                        // only cover the custom flow, which reaches WaitingForDevice from the
+                        // async repository check (a Busy state) after the button is long gone.
+                        if (state is UiState.WaitingForDevice && previous is UiState.Busy) {
+                            connectToAttachedDevice()
+                        }
+                        previous = state
+                        render(state)
+                    }
+                }
                 launch {
                     viewModel.log.collect { lines ->
                         binding.logView.text = lines.joinToString("\n")
@@ -150,13 +179,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectToAttachedDevice() {
-        val driver = UsbDevices.find(usbManager) ?: return
+        val driver = UsbDevices.find(usbManager)
+
+        // A device only matters once a firmware source is chosen and we're waiting for one
+        // (or offering a re-flash from Done). If one is plugged in earlier, say so rather
+        // than silently ignoring it, so the chooser doesn't look like nothing was detected.
+        val current = viewModel.state.value
+        if (current !is UiState.WaitingForDevice && current !is UiState.Done) {
+            if (driver != null) {
+                viewModel.logDiagnostic("M5Stack detected - choose a firmware source above to continue.")
+            }
+            return
+        }
+
+        if (driver == null) {
+            viewModel.logDiagnostic(
+                "No supported M5Stack found on USB yet. Check the cable is a data cable and " +
+                    "that the device is powered on."
+            )
+            return
+        }
         val device = driver.device
+        viewModel.logDiagnostic(
+            "Found USB device ${device.deviceName} (VID ${device.vendorId}, PID ${device.productId})."
+        )
 
         if (usbManager.hasPermission(device)) {
             viewModel.startDetection(device)
         } else {
+            viewModel.logDiagnostic("Requesting USB permission for the device...")
             requestPermission(device)
+        }
+    }
+
+    /** Fills the Wi-Fi SSID from the current network, asking for location first if needed. */
+    private fun ensureSsidPrefill() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
+            == PackageManager.PERMISSION_GRANTED
+        ) {
+            prefillSsid()
+        } else {
+            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
 
@@ -169,7 +232,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun onFlashClicked() = with(binding) {
+    private fun onFlashClicked() {
+        when (viewModel.currentMode()) {
+            FlashMode.NIGHTSCOUT -> flashWithWifi()
+            // Third-party firmware: the user must accept the disclaimer before every burn.
+            FlashMode.CUSTOM -> confirmThirdPartyThenFlash()
+            // xDripMon is Bluetooth-only: flash firmware, no Wi-Fi provisioning.
+            else -> viewModel.flash(null)
+        }
+    }
+
+    private fun flashWithWifi() = with(binding) {
         wifiPasswordLayout.error = null
 
         val ssid = wifiSsid.text?.toString()?.trim().orEmpty()
@@ -182,6 +255,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         viewModel.flash(if (setUpWifi) WifiCredentials(ssid, password) else null)
+    }
+
+    private fun confirmThirdPartyThenFlash() {
+        val message = HtmlCompat.fromHtml(
+            getString(R.string.eula_body), HtmlCompat.FROM_HTML_MODE_LEGACY,
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.eula_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.eula_accept) { _, _ -> viewModel.flash(null) }
+            .setNegativeButton(R.string.eula_decline, null)
+            .show()
     }
 
     private fun requestPermission(device: UsbDevice) {
@@ -211,15 +296,42 @@ class MainActivity : AppCompatActivity() {
         deviceCard.visibility = View.GONE
         progress.visibility = View.GONE
         actionButton.visibility = View.GONE
-        // Visible the moment the app opens so credentials can be typed before a device
-        // is plugged in; hidden only once there's nothing left to edit.
-        wifiCard.visibility = if (state is UiState.Busy || state is UiState.Done) {
-            View.GONE
-        } else {
+        modeChooser.visibility = View.GONE
+        customRepoCard.visibility = View.GONE
+        // The subtitle names both projects while choosing, then narrows to the chosen source.
+        appDescription.setText(
+            when (viewModel.currentMode()) {
+                FlashMode.NIGHTSCOUT -> R.string.app_description_nightscout
+                FlashMode.XDRIP -> R.string.app_description_xdrip
+                FlashMode.CUSTOM -> R.string.app_description_custom
+                null -> R.string.app_description
+            }
+        )
+        // Only the Nightscout flow provisions Wi-Fi; shown while there's still something to
+        // edit (i.e. before flashing starts and after it finishes).
+        wifiCard.visibility = if (
+            viewModel.currentMode() == FlashMode.NIGHTSCOUT &&
+            state !is UiState.Busy && state !is UiState.Done
+        ) {
             View.VISIBLE
+        } else {
+            View.GONE
         }
 
         when (state) {
+            is UiState.ChoosingMode -> {
+                statusTitle.text = getString(R.string.app_name)
+                statusDetail.text = getString(R.string.chooser_prompt)
+                modeChooser.visibility = View.VISIBLE
+            }
+
+            is UiState.EnteringRepo -> {
+                statusTitle.text = getString(R.string.mode_custom)
+                statusDetail.text = ""
+                customRepoCard.visibility = View.VISIBLE
+                customRepoLayout.error = state.error
+            }
+
             is UiState.WaitingForDevice -> {
                 statusTitle.text = getString(R.string.app_name)
                 statusDetail.text = state.message

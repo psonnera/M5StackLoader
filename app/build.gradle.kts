@@ -8,7 +8,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.m5stackloader"
+        applicationId = "com.psonnera.m5stackloader"
         minSdk = 28
         targetSdk = 35
         versionCode = 1

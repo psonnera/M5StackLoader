@@ -1,11 +1,41 @@
 <resources>
     <string name="app_name">M5Stack Loader</string>
-    <string name="app_description">Programs an M5Stack (Basic, Core2, or CoreS3) with the M5_NightscoutMon firmware</string>
+    <string name="app_description">Programs an M5Stack (Basic, Core2, or CoreS3) with the M5_NightscoutMon or M5Stack_xDripMon firmware</string>
+    <string name="app_description_nightscout">Programs an M5Stack (Basic, Core2, or CoreS3) with the M5_NightscoutMon firmware</string>
+    <string name="app_description_xdrip">Programs an M5Stack (Basic, Core2, or CoreS3) with the M5Stack_xDripMon firmware</string>
+    <string name="app_description_custom">Programs an M5Stack (Basic, Core2, or CoreS3) with custom firmware from GitHub</string>
     <string name="flash_button">Flash firmware</string>
     <string name="retry_button">Retry</string>
     <string name="details">Details</string>
     <string name="logo_m5stack">M5Stack</string>
     <string name="logo_nightscout">Nightscout</string>
+    <string name="chooser_prompt">What would you like to flash?</string>
+    <string name="mode_nightscout">Nightscout monitor (Wi-Fi)</string>
+    <string name="mode_xdrip">xDrip monitor (Bluetooth)</string>
+    <string name="mode_custom">Custom firmware from GitHub</string>
+
+    <string name="custom_repo_prompt">Enter the GitHub repository to flash from. It must contain a Binaries folder with a firmware.json and a Basic_4MB, ESP32_16MB, or CoreS3 build.</string>
+    <string name="custom_repo_hint">Repository URL</string>
+    <string name="custom_repo_prefix">https://github.com/</string>
+    <string name="custom_repo_continue">Continue</string>
+
+    <string name="eula_title">Third-party firmware</string>
+    <string name="eula_accept">I accept</string>
+    <string name="eula_decline">Cancel</string>
+    <string name="eula_body"><![CDATA[
+        You are about to flash firmware that is <b>not</b> part of the M5_NightscoutMon or
+        M5Stack_xDripMon projects. This firmware has not been reviewed, tested, or verified by
+        the author of this app.
+        <br/><br/>
+        The author of this app accepts <b>no liability whatsoever</b> for any damage, loss,
+        malfunction, or injury of any kind arising from flashing firmware that is not part of the
+        M5_NightscoutMon or M5Stack_xDripMon projects, including but not limited to damage to your
+        M5Stack device, your phone, or any connected equipment.
+        <br/><br/>
+        By continuing, you acknowledge that you use this feature entirely at your own risk and
+        accept full and sole responsibility for the firmware you choose to flash.
+    ]]></string>
+
     <string name="wifi_enable">Set up Wi-Fi on the device</string>
     <string name="wifi_ssid">Network name (SSID)</string>
     <string name="wifi_password">Password</string>

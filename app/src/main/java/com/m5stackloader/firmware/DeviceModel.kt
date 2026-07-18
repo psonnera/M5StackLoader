@@ -26,6 +26,9 @@ object DeviceModel {
     private const val PATH_BASIC_4MB = "Basic_4MB"
     private const val PATH_ESP32_16MB = "ESP32_16MB"
 
+    /** The variant subdirectories this app knows how to match a device to. */
+    val KNOWN_PATHS = setOf(PATH_CORE_S3, PATH_BASIC_4MB, PATH_ESP32_16MB)
+
     private const val MB = 1 shl 20
 
     /** Human-readable name for what is plugged in, for the confirmation screen. */
