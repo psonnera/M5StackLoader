@@ -16,33 +16,64 @@ code is correct because an AI wrote it.
 
 ## What it does
 
-An Android app that flashes [M5_NightscoutMon](https://github.com/psonnera/M5_NightscoutMon)
-onto an M5Stack over USB, with as little fuss as possible: plug the device into the phone,
-confirm what was found, tap **Flash**.
+An Android app that flashes firmware onto an M5Stack over USB with as little fuss as
+possible: plug the device into the phone, confirm what was found, tap **Flash**. The app
+works out which M5Stack you have, downloads the matching binaries, and burns them — you never
+pick a model or a file.
 
-The app works out which M5Stack you have, downloads the matching binaries from the firmware
-repository, and burns them. You never pick a model or a file. It can also write your phone's
+When it opens you choose what to flash:
+
+![The home screen: "What would you like to flash?" with three cards — a Nightscout owl, a Bluetooth mark, and a firmware box](docs/images/1-home-chooser.png)
+
+### 1. Nightscout monitor (Wi-Fi)
+
+Flashes [M5_NightscoutMon](https://github.com/psonnera/M5_NightscoutMon), which reads your
+glucose data over Wi-Fi. Because it needs a network, this mode can also write your phone's
 Wi-Fi credentials into the device as part of the same flash, so it joins your network on
-first boot without any manual setup on the device itself.
+first boot with no manual setup on the device itself. The SSID is prefilled from the network
+the phone is on; leave the box ticked to provision it, or untick it to flash firmware only.
+
+![The Nightscout screen with a "Set up Wi-Fi on the device" checkbox, a prefilled network name, and a password field](docs/images/2-nightscout-wifi-setup.png)
+
+### 2. xDrip monitor (Bluetooth)
+
+Flashes [M5Stack_xDripMon](https://github.com/psonnera/M5Stack_xDripMon), which talks to xDrip
+over Bluetooth. It needs no network, so this mode flashes firmware only — there is no Wi-Fi
+step. Plug in the device and flash.
+
+![The xDrip screen, prompting to plug the M5Stack into the phone with a USB cable](docs/images/3-bluetooth-xdrip.png)
+
+### 3. Custom firmware from GitHub
+
+Flashes any GitHub repository laid out like the two above — a `Binaries` folder with a
+`firmware.json` manifest and `Basic_4MB`, `ESP32_16MB`, or `CoreS3` builds. Paste the repo
+URL and continue; the app checks the `main` then `master` branch for a usable manifest before
+flashing. Because this firmware is not reviewed by the Nightscout/xDrip projects, the app
+warns you and asks you to confirm before it writes anything.
+
+![The custom-firmware screen with a GitHub repository URL field and a Continue button](docs/images/4-custom-repo-input.png)
 
 ## How to use it
 
 1. Plug the M5Stack into the phone with a USB-OTG cable or adapter. Android offers to open
    M5Stack Loader — allow it (tick "use by default" to skip this prompt next time). If it
    doesn't prompt, open the app manually with the device attached.
-2. Before or after plugging in, optionally fill in your Wi-Fi network name and password (the
-   app tries to prefill the SSID from what the phone is currently connected to). Leave the
-   checkbox on to have those credentials written to the device; tap "Why do we ask for this?"
-   for the privacy details — they never leave the phone except onto the device over USB.
-3. The app resets the device into its bootloader, identifies the model and flash size, and
+2. Choose what to flash: **Nightscout monitor (Wi-Fi)**, **xDrip monitor (Bluetooth)**, or
+   **Custom firmware from GitHub** (paste the repository URL and continue).
+3. For Nightscout only, optionally fill in your Wi-Fi network name and password (the app tries
+   to prefill the SSID from what the phone is currently connected to). Leave the checkbox on to
+   have those credentials written to the device; tap "Why do we ask for this?" for the privacy
+   details — they never leave the phone except onto the device over USB. The xDrip and custom
+   modes have no Wi-Fi step.
+4. The app resets the device into its bootloader, identifies the model and flash size, and
    fetches the matching firmware build (cached after the first run, re-validated against the
    server on later ones).
-4. Check the model and firmware shown, then tap **Flash**. A progress bar and a scrollable
+5. Check the model and firmware shown, then tap **Flash**. A progress bar and a scrollable
    log show what's happening; don't unplug the device while this runs.
-5. The device reboots into M5_NightscoutMon — you can unplug it. If you set up Wi-Fi, the app
-   looks for it on the network by its unique mDNS name (`m5ns-xxxx.local`, `xxxx` derived from
-   the device's MAC address) and checks that its on-device config page answers; if so, it
-   offers to open that page in your browser.
+6. The device reboots into the firmware — you can unplug it. If you set up Wi-Fi (Nightscout),
+   the app looks for it on the network by its unique mDNS name (`m5ns-xxxx.local`, `xxxx`
+   derived from the device's MAC address) and checks that its on-device config page answers;
+   if so, it offers to open that page in your browser.
 
 ## How it decides what to flash
 
