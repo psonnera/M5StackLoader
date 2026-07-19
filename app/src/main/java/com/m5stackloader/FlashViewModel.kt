@@ -235,9 +235,11 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 val nvsPartition = PartitionTable.findNvs(parts.firstOrNull { it.offset == 0x8000 }?.bytes)
-                val wifiImage = wifi?.let { buildWifiNvsImage(nvsPartition.size, it) }
+                val wifiEntries = wifi?.let { wifiNvsEntries(it) }
 
-                val totalBytes = parts.sumOf { it.bytes.size } + (wifiImage?.size ?: 0)
+                // The NVS image is always a whole partition, whether merged or freshly built, so
+                // the progress total is stable even though the image itself is decided mid-flash.
+                val totalBytes = parts.sumOf { it.bytes.size } + (if (wifiEntries != null) nvsPartition.size else 0)
                 var writtenBefore = 0
 
                 withContext(Dispatchers.IO) {
@@ -280,8 +282,11 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                         writtenBefore += part.bytes.size
                     }
 
-                    if (wifiImage != null) {
+                    if (wifiEntries != null) {
                         note("Writing Wi-Fi credentials for network \"${wifi.ssid}\".")
+                        // Reads the current nvs partition (same offset/size, since a same-family
+                        // reflash keeps the layout) and merges the Wi-Fi keys in; see buildNvsImage.
+                        val wifiImage = buildNvsImage(espLoader, nvsPartition, wifiEntries)
                         espLoader.writeFlash(wifiImage, nvsPartition.offset) { written, _ ->
                             val overall = (writtenBefore + written) * 100 / totalBytes
                             _state.value = UiState.Busy("Writing Wi-Fi settings...", overall)
@@ -292,7 +297,7 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
                     espLoader.hardReset()
                 }
 
-                _state.value = UiState.Done(modelName, wifiConfigured = wifiImage != null)
+                _state.value = UiState.Done(modelName, wifiConfigured = wifiEntries != null)
             } catch (e: Exception) {
                 fail(e)
             } finally {
@@ -308,13 +313,37 @@ class FlashViewModel(application: Application) : AndroidViewModel(application) {
      * namespace, same file) so even a device still running older firmware picks up its
      * unique name - see DeviceName.
      */
-    private fun buildWifiNvsImage(partitionSize: Int, wifi: WifiCredentials): ByteArray {
-        val strings = buildList {
-            add(NvsImage.Entry("SSID0", wifi.ssid))
-            if (wifi.password.isNotEmpty()) add(NvsImage.Entry("PASS0", wifi.password))
-            deviceMac?.let { add(NvsImage.Entry("device_name", DeviceName.deviceName(it))) }
+    private fun wifiNvsEntries(wifi: WifiCredentials): List<NvsImage.Entry> = buildList {
+        add(NvsImage.Entry("SSID0", wifi.ssid))
+        if (wifi.password.isNotEmpty()) add(NvsImage.Entry("PASS0", wifi.password))
+        deviceMac?.let { add(NvsImage.Entry("device_name", DeviceName.deviceName(it))) }
+    }
+
+    /**
+     * The NVS image to burn to the `nvs` partition. Every other setting a NightscoutMon device
+     * holds - Nightscout URL, token, units, alarms - lives in the same "M5NSconfig" namespace,
+     * so a from-scratch image would wipe them. When the flasher stub is running we read the
+     * current partition back and merge only the Wi-Fi keys in, preserving the rest. If anything
+     * about that read/merge does not work out (ROM fallback, a blank or unreadable partition),
+     * fall back to the fresh image - the same reset behaviour as before this feature existed.
+     */
+    private fun buildNvsImage(
+        espLoader: EspLoader,
+        nvs: PartitionTable.Partition,
+        entries: List<NvsImage.Entry>,
+    ): ByteArray {
+        if (espLoader.isStub) {
+            val existing = runCatching { espLoader.readFlash(nvs.offset, nvs.size) }
+                .onFailure { note("Could not read the device's current settings: ${it.message}") }
+                .getOrNull()
+            val merged = existing?.let { NvsImage.merge(it, WIFI_NVS_NAMESPACE, entries) }
+            if (merged != null) {
+                note("Kept the device's existing settings; only the Wi-Fi network was updated.")
+                return merged
+            }
+            note("Could not preserve the existing settings - they will be reset to defaults.")
         }
-        return NvsImage.build(partitionSize, WIFI_NVS_NAMESPACE, strings)
+        return NvsImage.build(nvs.size, WIFI_NVS_NAMESPACE, entries)
     }
 
     /**

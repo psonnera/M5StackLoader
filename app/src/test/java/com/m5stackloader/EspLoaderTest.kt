@@ -558,6 +558,44 @@ class EspLoaderTest {
     }
 
     @Test
+    fun `readFlash streams a multi-sector region back intact, control bytes and all`() {
+        val rom = FakeEspRom(Chip.ESP32, flashCapacityByte = 0x18)
+        // 0x5000 = five sectors, so the stub streams five frames plus a digest. The pattern
+        // is dense with 0xC0 and 0xDB (SLIP delimiter and escape), which must survive framing.
+        val expected = ByteArray(0x5000) { i ->
+            when (i % 4) {
+                0 -> 0xC0
+                1 -> 0xDB
+                2 -> 0x00
+                else -> i and 0xFF
+            }.toByte()
+        }
+        rom.presetFlash(0x9000, expected)
+        val loader = EspLoader(rom)
+
+        loader.connect()
+        loader.detectChip()
+        loader.spiAttach()
+        loader.runStub(noopStub())  // readFlash is stub-only
+
+        assertArrayEquals(expected, loader.readFlash(0x9000, expected.size))
+    }
+
+    @Test
+    fun `readFlash refuses to run without the stub`() {
+        val rom = FakeEspRom(Chip.ESP32, flashCapacityByte = 0x18)
+        val loader = EspLoader(rom)
+
+        loader.connect()
+        loader.detectChip()
+        loader.spiAttach()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            loader.readFlash(0x9000, 0x5000)
+        }
+    }
+
+    @Test
     fun `a CoreS3 on native USB still flashes, at its bootloader offset of 0x0`() {
         val rom = FakeEspRom(Chip.ESP32S3, flashCapacityByte = 0x18, isNativeUsb = true)
         val loader = EspLoader(rom)

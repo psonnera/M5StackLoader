@@ -3,6 +3,7 @@ package com.m5stackloader
 import com.m5stackloader.esp.NvsImage
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -117,5 +118,121 @@ class NvsImageTest {
         assertThrows(IllegalArgumentException::class.java) {
             NvsImage.build(0x5000, "M5NSconfig", listOf(NvsImage.Entry("A".repeat(16), "x")))
         }
+    }
+
+    // -------------------------------------------------------------------- merge
+
+    @Test
+    fun `merge keeps every other setting and only updates the Wi-Fi keys`() {
+        // A device that already holds Nightscout settings plus a previous Wi-Fi network.
+        val existing = NvsImage.build(
+            0x5000, "M5NSconfig",
+            listOf(
+                NvsImage.Entry("nsurl", "http://ns.example"),
+                NvsImage.Entry("units", "mgdl"),
+                NvsImage.Entry("SSID0", "OldNet"),
+                NvsImage.Entry("PASS0", "oldpass"),
+            ),
+        )
+
+        val merged = NvsImage.merge(
+            existing, "M5NSconfig",
+            listOf(NvsImage.Entry("SSID0", "NewNet"), NvsImage.Entry("PASS0", "newpass")),
+        )!!
+
+        assertEquals(0x5000, merged.size)
+        val live = readNamespaceStrings(merged, "M5NSconfig")
+        assertEquals("http://ns.example", live.value("nsurl"))
+        assertEquals("mgdl", live.value("units"))
+        assertEquals("NewNet", live.value("SSID0"))
+        assertEquals("newpass", live.value("PASS0"))
+        // The old network must be tombstoned, not left live alongside the new one.
+        assertEquals("only one SSID0 may be live", 1, live.count { it.first == "SSID0" })
+        assertEquals("only one PASS0 may be live", 1, live.count { it.first == "PASS0" })
+    }
+
+    @Test
+    fun `merge leaves untouched entries byte-for-byte identical`() {
+        // Proof that entries this class cannot even build (ints, blobs) would survive: the merge
+        // only edits the keys it is given, so the namespace + nsurl + units entries - the first
+        // five entry slots, bytes 64..224 - must come out exactly as they went in.
+        val existing = NvsImage.build(
+            0x5000, "M5NSconfig",
+            listOf(
+                NvsImage.Entry("nsurl", "http://ns.example"),
+                NvsImage.Entry("units", "mgdl"),
+                NvsImage.Entry("SSID0", "OldNet"),
+                NvsImage.Entry("PASS0", "oldpass"),
+            ),
+        )
+
+        val merged = NvsImage.merge(
+            existing, "M5NSconfig",
+            listOf(NvsImage.Entry("SSID0", "NewNet")),
+        )!!
+
+        assertArrayEquals(existing.copyOfRange(64, 224), merged.copyOfRange(64, 224))
+    }
+
+    @Test
+    fun `merge returns null for a blank partition, so the caller builds fresh`() {
+        val blank = ByteArray(0x5000) { 0xFF.toByte() }
+        assertNull(NvsImage.merge(blank, "M5NSconfig", listOf(NvsImage.Entry("SSID0", "X"))))
+    }
+
+    @Test
+    fun `merge returns null when the namespace is not present`() {
+        val other = NvsImage.build(0x5000, "OtherNs", listOf(NvsImage.Entry("k", "v")))
+        assertNull(NvsImage.merge(other, "M5NSconfig", listOf(NvsImage.Entry("SSID0", "X"))))
+    }
+
+    @Test
+    fun `merge returns null for an image that is not a whole number of pages`() {
+        assertNull(NvsImage.merge(ByteArray(0x5000 - 1), "M5NSconfig", listOf(NvsImage.Entry("SSID0", "X"))))
+    }
+
+    // --- a minimal NVS reader, only for asserting on merge output ---
+
+    private fun List<Pair<String, String>>.value(key: String): String? = lastOrNull { it.first == key }?.second
+
+    /** Every live (written, non-erased) string entry in [namespace], in page/slot order. */
+    private fun readNamespaceStrings(image: ByteArray, namespace: String): List<Pair<String, String>> {
+        val pageSize = 4096; val entrySize = 32; val entriesPerPage = 126; val tableOff = 64; val bitmapOff = 32
+        val active = 0xFFFFFFFE.toInt(); val full = 0xFFFFFFFC.toInt()
+
+        fun le32(at: Int) = (image[at].toInt() and 0xFF) or ((image[at + 1].toInt() and 0xFF) shl 8) or
+            ((image[at + 2].toInt() and 0xFF) shl 16) or ((image[at + 3].toInt() and 0xFF) shl 24)
+        fun state(base: Int, i: Int) = (image[base + bitmapOff + (2 * i) / 8].toInt() ushr ((2 * i) % 8)) and 0b11
+        fun key(off: Int): String {
+            var end = off + 8; while (end < off + 24 && image[end] != 0.toByte()) end++
+            return String(image, off + 8, end - (off + 8), Charsets.US_ASCII)
+        }
+
+        val out = mutableListOf<Pair<String, String>>()
+        var nsIndex = -1
+        // Pass 1: resolve the namespace index; pass 2: collect its string entries.
+        for (pass in 0..1) {
+            for (page in 0 until image.size / pageSize) {
+                val base = page * pageSize
+                if (le32(base) != active && le32(base) != full) continue
+                var i = 0
+                while (i < entriesPerPage) {
+                    if (state(base, i) != 0b10) { i++; continue }   // 0b10 == written
+                    val off = base + tableOff + i * entrySize
+                    val span = (image[off + 2].toInt() and 0xFF).coerceIn(1, entriesPerPage - i)
+                    val ns = image[off].toInt() and 0xFF
+                    val type = image[off + 1].toInt() and 0xFF
+                    if (pass == 0 && ns == 0 && type == 0x01 && key(off) == namespace) {
+                        nsIndex = image[off + 24].toInt() and 0xFF
+                    } else if (pass == 1 && ns == nsIndex && type == 0x21) {
+                        val size = (image[off + 24].toInt() and 0xFF) or ((image[off + 25].toInt() and 0xFF) shl 8)
+                        val value = String(image, off + entrySize, size - 1, Charsets.UTF_8) // drop NUL
+                        out += key(off) to value
+                    }
+                    i += span
+                }
+            }
+        }
+        return out
     }
 }

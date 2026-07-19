@@ -89,6 +89,9 @@ class FakeEspRom(
     private var ackDropped = false
     private var md5Replies = 0
 
+    /** Outstanding flow-control acks to swallow while a READ_FLASH stream is being drained. */
+    private var readFlashAcksRemaining = 0
+
     /** True once ESP_MEM_END has jumped into a non-zero entrypoint (the stub is "running"). */
     private var stubActive = false
 
@@ -214,6 +217,13 @@ class FakeEspRom(
 
     private fun handle(packet: ByteArray) {
         if (wedged) return  // the real ROM's SLIP parser is corrupted; it never answers again
+        // While streaming a flash read, the loader answers each data frame with a bare 4-byte
+        // "total received" word rather than a command. Swallow those - they are flow control,
+        // not requests, and the real stub reads them the same way.
+        if (readFlashAcksRemaining > 0 && packet.size == 4) {
+            readFlashAcksRemaining--
+            return
+        }
         require(packet[0].toInt() == 0x00) { "not a request" }
         val op = packet[1].toInt() and 0xFF
         val size = le16(packet, 2)
@@ -304,6 +314,26 @@ class FakeEspRom(
 
             ESP_FLASH_DEFL_END -> reply(op)
 
+            ESP_READ_FLASH -> {
+                // Mirrors the stub's streaming read: acknowledge the command, stream the region
+                // in sector-sized frames (the loader flow-controls each with a running total we
+                // swallow above), then sign off with an MD5 of everything sent.
+                val address = le32(body, 0)
+                val length = le32(body, 4)
+                reply(op)
+                val data = readFlash(address, length)
+                var pos = 0
+                var frames = 0
+                while (pos < length) {
+                    val end = minOf(pos + READ_FLASH_SECTOR, length)
+                    sendRawFrame(data.copyOfRange(pos, end))
+                    frames++
+                    pos = end
+                }
+                sendRawFrame(MessageDigest.getInstance("MD5").digest(data))
+                readFlashAcksRemaining += frames
+            }
+
             ESP_SPI_FLASH_MD5 -> {
                 val address = le32(body, 0)
                 val length = le32(body, 4)
@@ -341,6 +371,11 @@ class FakeEspRom(
     /** Seeds a register the loader will READ_REG later, e.g. the eFuse MAC words. */
     fun presetRegister(address: Int, value: Int) {
         registers[address] = value
+    }
+
+    /** Seeds a region of flash directly, e.g. an existing nvs partition to be read back. */
+    fun presetFlash(address: Int, bytes: ByteArray) {
+        for (i in bytes.indices) flash[at(address + i)] = bytes[i]
     }
 
     private fun readRegister(address: Int): Int = when (address) {
@@ -468,5 +503,9 @@ class FakeEspRom(
         const val ESP_FLASH_DEFL_DATA = 0x11
         const val ESP_FLASH_DEFL_END = 0x12
         const val ESP_SPI_FLASH_MD5 = 0x13
+        const val ESP_READ_FLASH = 0xD2
+
+        /** Sector size the stub streams flash reads in, matching EspLoader's request. */
+        const val READ_FLASH_SECTOR = 4096
     }
 }

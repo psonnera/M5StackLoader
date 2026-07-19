@@ -47,7 +47,8 @@ class EspLoader(
     var flashSize: Int = 0
         private set
 
-    private var isStub = false
+    var isStub = false
+        private set
     private var usbOtgConsole = false
 
     /** The rate the link is actually running at, which [changeBaud] has to tell the stub. */
@@ -530,6 +531,61 @@ class EspLoader(
         }
     }
 
+    /**
+     * Reads [size] bytes of flash starting at [offset], using the flasher stub's streaming
+     * ESP_READ_FLASH command. Stub only - the ROM has no equivalent in this port, so callers
+     * must check [isStub] first. Mirrors esptool's stub read_flash: after the command is
+     * acknowledged the stub streams the data in sector-sized frames, we acknowledge each with
+     * the running total received (its flow control), and it closes with an MD5 of everything
+     * it sent, which we verify before trusting the bytes.
+     */
+    fun readFlash(offset: Int, size: Int): ByteArray {
+        require(isStub) { "readFlash needs the flasher stub; the ROM loader cannot stream flash." }
+        require(size >= 0) { "size must be non-negative, got $size" }
+        if (size == 0) return EMPTY
+
+        checkCommand(
+            "start reading flash",
+            ESP_READ_FLASH,
+            pack(offset, size, FLASH_SECTOR_SIZE, READ_FLASH_MAX_IN_FLIGHT),
+            timeoutMs = timeoutPerMb(MD5_TIMEOUT_PER_MB_MS, size),
+        )
+
+        val data = ByteArrayOutputStream(size)
+        var received = 0
+        while (received < size) {
+            val frame = nextFrame(System.currentTimeMillis() + DEFAULT_TIMEOUT_MS)
+                ?: throw EspError("The device stopped sending flash data after $received of $size bytes.")
+            // Every frame but the last carries a full sector; a short frame arriving before the
+            // end means bytes went missing on the wire, and accepting it would misalign the rest.
+            if (received + frame.size < size && frame.size < FLASH_SECTOR_SIZE) {
+                throw EspError("Truncated flash-read frame (${frame.size} bytes) at offset $received.")
+            }
+            data.write(frame)
+            received += frame.size
+            io.write(slipEncode(pack(received)))  // flow control: total bytes received so far
+        }
+
+        val result = data.toByteArray()
+        if (result.size != size) {
+            throw EspError("Flash read returned ${result.size} bytes, expected $size.")
+        }
+
+        // The stub signs off with an MD5 of the data it streamed - the only integrity check on
+        // this transfer, so it is not optional.
+        val digestFrame = nextFrame(System.currentTimeMillis() + DEFAULT_TIMEOUT_MS)
+            ?: throw EspError("The device did not send a digest after the flash data.")
+        if (digestFrame.size != 16) {
+            throw EspError("Expected a 16-byte flash-read digest, got ${digestFrame.size} bytes.")
+        }
+        val expected = digestFrame.joinToString("") { "%02x".format(it) }
+        val actual = md5Hex(result)
+        if (!actual.equals(expected, ignoreCase = true)) {
+            throw EspError("The flash read is corrupt: digest $actual does not match the device's $expected.")
+        }
+        return result
+    }
+
     /** Leaves flash mode. Skipped on the ROM, where it would exit the bootloader early. */
     fun finishFlash() {
         if (isStub) {
@@ -982,8 +1038,12 @@ class EspLoader(
         private const val ESP_FLASH_DEFL_DATA = 0x11
         private const val ESP_FLASH_DEFL_END = 0x12
         private const val ESP_SPI_FLASH_MD5 = 0x13
+        private const val ESP_READ_FLASH = 0xD2
 
         private const val ESP_CHECKSUM_MAGIC = 0xEF
+
+        /** Packets the stub may stream ahead before waiting for an acknowledgement. */
+        private const val READ_FLASH_MAX_IN_FLIGHT = 64
 
         // SLIP framing
         private const val SLIP_END = 0xC0
