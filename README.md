@@ -144,6 +144,13 @@ in-memory bootloader that inflates the blocks it is sent and answers MD5 with a 
 what it actually decoded. A fault in the framing, checksums, block splitting or compression
 fails those tests.
 
+## Privacy
+
+The app collects nothing — no analytics, no accounts, no data leaves the phone except
+the firmware download from GitHub. What it accesses and why (including the location
+permission it needs to read the Wi-Fi network name) is documented in
+[`PRIVACY.md`](PRIVACY.md).
+
 ## Licence and credits
 
 GPL-3.0-or-later, matching M5_NightscoutMon. Full text in [`LICENSE`](LICENSE).

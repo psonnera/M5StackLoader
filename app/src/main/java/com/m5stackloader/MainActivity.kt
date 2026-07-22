@@ -19,9 +19,11 @@ import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.text.method.LinkMovementMethod
 import android.view.View
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -55,9 +57,23 @@ class MainActivity : AppCompatActivity() {
         getSystemService(Context.USB_SERVICE) as UsbManager
     }
 
+    // FINE and COARSE must be requested together: from Android 12 on, the system
+    // silently ignores a request for FINE alone.
     private val locationPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted -> if (granted) prefillSsid() }
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) { result ->
+        if (result[Manifest.permission.ACCESS_FINE_LOCATION] == true) {
+            saveSsidAutofillChoice(CHOICE_ACCEPTED)
+            prefillSsid()
+        } else if (shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            // One "no" is enough - never re-ask on our own initiative.
+            saveSsidAutofillChoice(CHOICE_DECLINED)
+        } else {
+            // "Don't ask again": the system prompt is dead, so recovery has to go
+            // through the app's settings screen.
+            saveSsidAutofillChoice(CHOICE_DENIED_BY_SYSTEM)
+        }
+    }
 
     /** Fires when the user answers the system's "allow this app to access the device?" dialog. */
     private val permissionReceiver = object : BroadcastReceiver() {
@@ -212,15 +228,91 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** Fills the Wi-Fi SSID from the current network, asking for location first if needed. */
+    /**
+     * Fills the Wi-Fi SSID from the current network, walking the user through the
+     * location disclosure and permission first if needed.
+     *
+     * Reading the SSID needs the location permission, and the Play User Data policy
+     * requires an in-app disclosure before the system prompt - so the first time
+     * through, a dialog explains what location is used for and offers a way out.
+     * A refusal (in the dialog or the system prompt) is remembered and never nagged
+     * about again; the "Why do we ask for this?" link remains as the way back in.
+     */
     private fun ensureSsidPrefill() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
-            == PackageManager.PERMISSION_GRANTED
-        ) {
+        if (hasLocationPermission()) {
             prefillSsid()
-        } else {
-            locationPermission.launch(Manifest.permission.ACCESS_FINE_LOCATION)
+            return
         }
+        when (ssidAutofillChoice()) {
+            CHOICE_DECLINED, CHOICE_DENIED_BY_SYSTEM -> Unit // manual entry, no nag
+            // Accepted before but the permission is gone (revoked in settings, or the
+            // process died before the prompt was answered): the disclosure was already
+            // agreed to, so go straight back to the system prompt.
+            CHOICE_ACCEPTED -> launchLocationPermission()
+            else -> showSsidDisclosureDialog()
+        }
+    }
+
+    /** The Play-mandated prominent disclosure. Dismissing it (back / outside tap) is
+     *  not consent and not a refusal either - it will simply be offered again. */
+    private fun showSsidDisclosureDialog() {
+        val message = HtmlCompat.fromHtml(
+            getString(R.string.ssid_disclosure_body), HtmlCompat.FROM_HTML_MODE_LEGACY,
+        )
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.ssid_disclosure_title)
+            .setMessage(message)
+            .setPositiveButton(R.string.ssid_disclosure_accept) { _, _ ->
+                saveSsidAutofillChoice(CHOICE_ACCEPTED)
+                launchLocationPermission()
+            }
+            .setNegativeButton(R.string.ssid_disclosure_decline) { _, _ ->
+                saveSsidAutofillChoice(CHOICE_DECLINED)
+            }
+            .show()
+    }
+
+    /** "Auto-fill network name" in the privacy dialog: the way back in after a refusal.
+     *  The dialog's body is the disclosure, so this tap is informed consent. */
+    private fun autofillFromPrivacyDialog() {
+        if (hasLocationPermission()) {
+            prefillSsid()
+            return
+        }
+        val promptIsDead = ssidAutofillChoice() == CHOICE_DENIED_BY_SYSTEM &&
+            !shouldShowRequestPermissionRationale(Manifest.permission.ACCESS_FINE_LOCATION)
+        if (promptIsDead) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.fromParts("package", packageName, null),
+                ),
+            )
+            Toast.makeText(this, R.string.wifi_autofill_settings_toast, Toast.LENGTH_LONG).show()
+        } else {
+            saveSsidAutofillChoice(CHOICE_ACCEPTED)
+            launchLocationPermission()
+        }
+    }
+
+    private fun hasLocationPermission() =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun launchLocationPermission() = locationPermission.launch(
+        arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        ),
+    )
+
+    private fun ssidAutofillChoice(): String? =
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_SSID_AUTOFILL_CHOICE, null)
+
+    private fun saveSsidAutofillChoice(choice: String) {
+        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putString(KEY_SSID_AUTOFILL_CHOICE, choice).apply()
     }
 
     private fun prefillSsid() {
@@ -287,6 +379,9 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.wifi_privacy_title)
             .setMessage(message)
             .setPositiveButton(android.R.string.ok, null)
+            .setNeutralButton(R.string.wifi_autofill_button) { _, _ ->
+                autofillFromPrivacyDialog()
+            }
             .show()
         dialog.findViewById<TextView>(android.R.id.message)?.movementMethod =
             LinkMovementMethod.getInstance()
@@ -420,5 +515,13 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val ACTION_USB_PERMISSION = "com.m5stackloader.USB_PERMISSION"
+
+        const val PREFS_NAME = "m5loader"
+
+        /** The user's answer to the SSID auto-fill disclosure; absent until they choose. */
+        const val KEY_SSID_AUTOFILL_CHOICE = "ssid_autofill_choice"
+        const val CHOICE_ACCEPTED = "accepted"
+        const val CHOICE_DECLINED = "declined"
+        const val CHOICE_DENIED_BY_SYSTEM = "denied_by_system"
     }
 }

@@ -42,15 +42,44 @@
     <string name="wifi_password_hint">Leave empty for an open network</string>
     <string name="wifi_password_error">Password must be empty or 8–63 characters</string>
     <string name="wifi_privacy_link">Why do we ask for this?</string>
+
+    <!-- Prominent location disclosure, shown before the runtime permission request as
+         required by the Google Play User Data policy. -->
+    <string name="ssid_disclosure_title">Auto-fill your Wi-Fi network name?</string>
+    <string name="ssid_disclosure_body"><![CDATA[
+        This app can fill in the network name (SSID) field for you by reading which
+        Wi-Fi network this phone is connected to.
+        <br/><br/>
+        Android treats the name of your Wi-Fi network as <b>location data</b>, so this
+        app needs the <b>location permission</b> to read it. This app uses location
+        access <b>only</b> to read your current Wi-Fi network name and place it in the
+        network name field, so your M5Stack can join the same network. It never reads
+        your GPS position, never tracks you, and never sends your location or network
+        name over the internet. The network name is only written to your M5Stack over
+        the USB cable.
+        <br/><br/>
+        This is optional. If you prefer, choose “No thanks” and type the network name
+        yourself.
+    ]]></string>
+    <string name="ssid_disclosure_accept">Allow auto-fill</string>
+    <string name="ssid_disclosure_decline">No thanks</string>
+    <string name="wifi_autofill_button">Auto-fill network name</string>
+    <string name="wifi_autofill_settings_toast">Location permission is turned off for this app. To use auto-fill, allow Location in the settings screen that just opened.</string>
     <string name="open_config_button">Open device configuration</string>
     <string name="config_checking">Looking for your device on the network…</string>
     <string name="config_not_found">Couldn\'t find the device automatically. On the M5Stack, press the right button until its QR code and IP address show, or browse to http://%1$s.local</string>
     <string name="start_over_button">Start over</string>
-    <string name="wifi_privacy_title">About your Wi-Fi password</string>
+    <string name="wifi_privacy_title">About your Wi-Fi details</string>
     <string name="wifi_privacy_body"><![CDATA[
-        Your Wi-Fi network name and password are written only to your M5Stack, over the
-        USB cable connected to this phone. They are never uploaded, transmitted over the
-        internet, logged, or stored anywhere by this app.
+        <b>Network name (SSID):</b> to save you typing, this app can read the name of
+        the Wi-Fi network your phone is connected to. Android treats that name as
+        location data, so reading it needs the location permission. This app uses
+        location access only for this — it never reads your GPS position and never
+        tracks you. Auto-fill is optional; you can always type the name yourself.
+        <br/><br/>
+        <b>Password:</b> your Wi-Fi network name and password are written only to your
+        M5Stack, over the USB cable connected to this phone. They are never uploaded,
+        transmitted over the internet, logged, or stored anywhere by this app.
         <br/><br/>
         The only internet access this app performs is downloading the M5_NightscoutMon
         firmware files from GitHub before flashing. That download never includes your
