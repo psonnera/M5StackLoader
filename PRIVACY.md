@@ -100,4 +100,4 @@ updated in the repository, where its full change history is publicly visible.
 Questions about this policy or the app's data handling:
 
 - Open an issue at [github.com/psonnera/M5StackLoader/issues](https://github.com/psonnera/M5StackLoader/issues)
-- Email: mozmoz74@gmail.com
+- Email: patrick.sonnerat@hotmail.com
