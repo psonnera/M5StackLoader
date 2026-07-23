@@ -98,13 +98,10 @@ Anything else — an 8MB ESP32, an unknown chip — is refused rather than guess
 - A USB-OTG cable or adapter
 - An internet connection the first time (binaries are then cached)
 
-## Building
+## Install
 
-```sh
-./gradlew assembleDebug          # app/build/outputs/apk/debug/app-debug.apk
-./gradlew installDebug           # to a connected phone
-./gradlew testDebugUnitTest      # protocol + manifest tests
-```
+Test the app from the [Google Play Store](https://play.google.com/apps/internaltest/4700941958941245133)
+Or download and install the .apk from [Releases](https://github.com/psonnera/M5StackLoader/releases)
 
 ## How it works
 
